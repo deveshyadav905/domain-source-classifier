@@ -1,0 +1,22 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Both accredited users and anonymous/offline bypass users can access the cache
+    match /domain_cache/{domainId} {
+      allow read, write: if true;
+    }
+    
+    match /source_cache/{sourceId} {
+      allow read, write: if true;
+    }
+
+    match /news_feed_cache/{feedId} {
+      allow read, write: if true;
+    }
+    
+    // Allow users, guests, and offline bypass clients to save and query history
+    match /history/{historyId} {
+      allow read, write: if true;
+    }
+  }
+}

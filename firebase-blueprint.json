@@ -1,0 +1,40 @@
+{
+  "collections": {
+    "domain_cache": {
+      "schema": {
+        "domain": "string",
+        "category": "string",
+        "isNewsPublisher": "string",
+        "reasoning": "string",
+        "createdAt": "timestamp"
+      },
+      "indexes": []
+    },
+    "source_cache": {
+      "schema": {
+        "source": "string",
+        "country": "string",
+        "language": "string",
+        "category": "string",
+        "createdAt": "timestamp"
+      },
+      "indexes": []
+    },
+    "history": {
+      "schema": {
+        "userId": "string",
+        "userEmail": "string",
+        "fileName": "string",
+        "mode": "string",
+        "totalCount": "number",
+        "timestamp": "timestamp",
+        "results": "array"
+      },
+      "indexes": [
+        {
+          "fields": ["userId", "timestamp"]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Domain Classifier",
+  "description": "Classify domains from a Google Sheet into categories and detect News publishers using Gemini, and write the classifications back to the sheet.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
