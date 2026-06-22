@@ -135,7 +135,7 @@ export default function Header({
                   <FileSpreadsheet className="absolute left-3.5 top-3 h-4.5 w-4.5 text-gray-400" />
                   <input
                     type="text"
-                    placeholder="e.g. https://docs.google.com/spreadsheets/d/1MBAlFt-YPa8NMsmyrPqGMOkJ5ukjLgODufd6bh4Hwik/edit#gid=0"
+                    placeholder="e.g. https://docs.google.com/spreadsheets/d/your-spreadsheet-id/edit#gid=0"
                     value={sheetUrlInput}
                     onChange={(e) => {
                       setSheetUrlInput(e.target.value);

@@ -34,7 +34,8 @@ interface HistoryScreenProps {
 
 export default function HistoryScreen({ userId, onLoadRun }: HistoryScreenProps) {
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
@@ -48,7 +49,8 @@ export default function HistoryScreen({ userId, onLoadRun }: HistoryScreenProps)
     if (userId === "offline_sandbox_bypass_user") {
       setIsOffline(true);
       try {
-        const localVal = localStorage.getItem("publisher_history_runs");
+        const key = userId ? `publisher_history_runs_${userId}` : "publisher_history_runs";
+        const localVal = localStorage.getItem(key);
         if (localVal) {
           const parsed = JSON.parse(localVal);
           setHistoryItems(parsed);
@@ -89,7 +91,8 @@ export default function HistoryScreen({ userId, onLoadRun }: HistoryScreenProps)
       console.warn("Could not query history on Firestore. Falling back to local device storage.", err);
       setIsOffline(true);
       try {
-        const localVal = localStorage.getItem("publisher_history_runs");
+        const key = userId ? `publisher_history_runs_${userId}` : "publisher_history_runs";
+        const localVal = localStorage.getItem(key);
         if (localVal) {
           const parsed = JSON.parse(localVal);
           setHistoryItems(parsed);
@@ -106,7 +109,8 @@ export default function HistoryScreen({ userId, onLoadRun }: HistoryScreenProps)
   };
 
   useEffect(() => {
-    fetchHistory();
+    setHasLoaded(false);
+    setHistoryItems([]);
   }, [userId]);
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
@@ -120,11 +124,12 @@ export default function HistoryScreen({ userId, onLoadRun }: HistoryScreenProps)
     
     // Always remove from local storage state regardless
     try {
-      const localVal = localStorage.getItem("publisher_history_runs");
+      const key = userId ? `publisher_history_runs_${userId}` : "publisher_history_runs";
+      const localVal = localStorage.getItem(key);
       if (localVal) {
         const parsed = JSON.parse(localVal) as any[];
         const filtered = parsed.filter(item => item.id !== id);
-        localStorage.setItem("publisher_history_runs", JSON.stringify(filtered));
+        localStorage.setItem(key, JSON.stringify(filtered));
       }
     } catch (e) {
       console.error("Failed local delete sync", e);
@@ -189,7 +194,29 @@ export default function HistoryScreen({ userId, onLoadRun }: HistoryScreenProps)
       </div>
 
       {/* Main Content Area */}
-      {loading ? (
+      {!hasLoaded ? (
+        <div className="p-16 text-center border border-indigo-100 bg-white shadow-3xs rounded-3xl flex flex-col items-center justify-center gap-4">
+          <div className="h-14 w-14 rounded-full bg-indigo-50 border border-indigo-100/60 flex items-center justify-center text-indigo-650 animate-pulse">
+            <History className="h-6 w-6" />
+          </div>
+          <div className="space-y-1.5 max-w-md">
+            <p className="text-xs font-bold text-gray-800 uppercase tracking-widest leading-none">History Logs Secure Database</p>
+            <p className="text-[11.5px] text-gray-400 leading-relaxed">
+              Previously processed spreadsheets and categorized domain run saves are securely stored in the cloud. Keep your environment lightweight by loading historical logs on demand.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setHasLoaded(true);
+              fetchHistory();
+            }}
+            className="px-5 py-2.5 bg-indigo-650 hover:bg-indigo-700 text-white rounded-2xl text-xs font-bold inline-flex items-center gap-2 transform active:scale-97 transition-all shadow-sm cursor-pointer hover:shadow-md"
+          >
+            <History className="h-4 w-4 text-white" />
+            Load All History Logs
+          </button>
+        </div>
+      ) : loading ? (
         <div className="p-16 flex flex-col items-center justify-center gap-3 bg-white border border-gray-100 rounded-2xl">
           <Loader2 className="h-8 w-8 text-indigo-600 animate-spin" />
           <p className="text-xs text-gray-400 font-semibold uppercase tracking-wider animate-pulse">Loading Workspace History...</p>

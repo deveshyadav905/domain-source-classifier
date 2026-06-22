@@ -76,21 +76,23 @@ function saveLocalCache(storeKey: string, data: Record<string, any>) {
   }
 }
 
-function getLocalHistory(): any[] {
+function getLocalHistory(userId?: string): any[] {
   try {
-    const value = localStorage.getItem("publisher_history_runs");
+    const key = userId ? `publisher_history_runs_${userId}` : "publisher_history_runs";
+    const value = localStorage.getItem(key);
     return value ? JSON.parse(value) : [];
   } catch {
     return [];
   }
 }
 
-function saveLocalHistoryItem(item: any) {
+function saveLocalHistoryItem(item: any, userId?: string) {
   try {
-    const current = getLocalHistory();
+    const current = getLocalHistory(userId);
     // Keep last 30 runs
     const updated = [item, ...current].slice(0, 30);
-    localStorage.setItem("publisher_history_runs", JSON.stringify(updated));
+    const key = userId ? `publisher_history_runs_${userId}` : "publisher_history_runs";
+    localStorage.setItem(key, JSON.stringify(updated));
   } catch (e) {
     console.error("Local storage history error:", e);
   }
@@ -355,7 +357,7 @@ export async function saveRunHistory(
     timestamp: { seconds: Math.floor(Date.now() / 1000) },
     results: cleanForFirestore(results)
   };
-  saveLocalHistoryItem(localItem);
+  saveLocalHistoryItem(localItem, userId);
 
   // 2. Sync to Firestore history
   try {

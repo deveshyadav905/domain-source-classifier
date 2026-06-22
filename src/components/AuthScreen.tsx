@@ -2,7 +2,8 @@ import React, { useState } from "react";
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword,
-  signInAnonymously
+  signInAnonymously,
+  sendPasswordResetEmail
 } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import { Sparkles, Mail, Lock, AlertCircle, Loader2, RefreshCw } from "lucide-react";
@@ -13,20 +14,50 @@ interface AuthScreenProps {
 
 export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
   const [isSignUp, setIsSignUp] = useState(false);
+  const [forgotMode, setForgotMode] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [authNotAllowed, setAuthNotAllowed] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+    setSuccess(null);
+    setAuthNotAllowed(false);
+
+    if (forgotMode) {
+      if (!email) {
+        setError("Please enter your email address.");
+        return;
+      }
+      setLoading(true);
+      try {
+        await sendPasswordResetEmail(auth, email);
+        setSuccess("A password reset secure link has been dispatched to your email address! Please check your inbox and follow the instructions.");
+      } catch (err: any) {
+        console.error("Forgot password error:", err);
+        const message = err.message || "";
+        if (message.includes("auth/operation-not-allowed")) {
+          setAuthNotAllowed(true);
+          setError("Password reset email provider is not enabled yet in your Firebase Project Console.");
+        } else if (message.includes("auth/user-not-found")) {
+          setError("No registered account found with this email address.");
+        } else {
+          setError(err.message || "An unexpected error occurred. Please check your credentials.");
+        }
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     if (!email || !password) {
       setError("Please fill in all fields.");
       return;
     }
-    setError(null);
-    setAuthNotAllowed(false);
     setLoading(true);
 
     try {
@@ -105,15 +136,28 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
         {/* Content Form */}
         <div className="p-6 sm:p-8 space-y-6">
           <div className="space-y-1.5 text-center">
-            <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wide">
-              {isSignUp ? "Create Workspace Account" : "Sign In to Your Workspace"}
+            <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wide animate-fade-in">
+              {forgotMode 
+                ? "Reset Your Password" 
+                : isSignUp 
+                  ? "Create Workspace Account" 
+                  : "Sign In to Your Workspace"}
             </h2>
             <p className="text-[11px] text-gray-500">
-              {isSignUp 
-                ? "Sign up to track validation performance, view logs, and save server costs" 
-                : "Enter your developer or editor credentials to access the classification systems"}
+              {forgotMode
+                ? "Enter your developer or editor email address, and we'll send you a recovery link to restore your workspace access."
+                : isSignUp 
+                  ? "Sign up to track validation performance, view logs, and save server costs" 
+                  : "Enter your developer or editor credentials to access the classification systems"}
             </p>
           </div>
+
+          {success && (
+            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-[11px] text-emerald-800 flex items-start gap-2.5 animate-fade-in">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse mt-1.5 shrink-0" />
+              <div className="break-all leading-normal font-semibold text-left">{success}</div>
+            </div>
+          )}
 
           {error && (
             <div className="space-y-3">
@@ -126,7 +170,7 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
                 <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-xl text-[11px] text-amber-900 space-y-3 leading-relaxed text-left">
                   <div className="font-bold flex items-center gap-1.5 text-amber-800 text-xs uppercase tracking-wider">
                     <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-ping" />
-                    How to enable Sign-in in Firebase:
+                    How to enable Sign-in or Password Reset in Firebase:
                   </div>
                   <ol className="list-decimal pl-4 space-y-1 font-medium text-amber-950">
                     <li>Go to your <a href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer" className="underline font-bold text-indigo-700 hover:text-indigo-900">Firebase Console</a></li>
@@ -164,20 +208,37 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
               </div>
             </div>
 
-            <div className="space-y-1">
-              <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Password</label>
-              <div className="relative">
-                <Lock className="absolute left-3.5 top-3 h-4 w-4 text-gray-400" />
-                <input
-                  type="password"
-                  required
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="pl-10 pr-4 py-2.5 w-full text-xs rounded-xl border border-gray-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-100 focus:outline-hidden bg-slate-50/50 text-gray-800"
-                />
+            {!forgotMode && (
+              <div className="space-y-1">
+                <div className="flex justify-between items-center">
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Password</label>
+                  {!isSignUp && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForgotMode(true);
+                        setError(null);
+                        setSuccess(null);
+                      }}
+                      className="text-[10px] font-bold text-indigo-600 hover:underline cursor-pointer"
+                    >
+                      Forgot Password?
+                    </button>
+                  )}
+                </div>
+                <div className="relative">
+                  <Lock className="absolute left-3.5 top-3 h-4 w-4 text-gray-400" />
+                  <input
+                    type="password"
+                    required
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="pl-10 pr-4 py-2.5 w-full text-xs rounded-xl border border-gray-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-100 focus:outline-hidden bg-slate-50/50 text-gray-800"
+                  />
+                </div>
               </div>
-            </div>
+            )}
 
             <button
               type="submit"
@@ -187,11 +248,11 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
               {loading ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin text-white/80" />
-                  Authenticating...
+                  Requesting...
                 </>
               ) : (
                 <>
-                  {isSignUp ? "Generate Account" : "Access Workspace"}
+                  {forgotMode ? "Send Reset Link" : isSignUp ? "Generate Account" : "Access Workspace"}
                 </>
               )}
             </button>
@@ -223,18 +284,35 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
           </div>
 
           <p className="text-[11px] text-center text-gray-500">
-            {isSignUp ? "Already have a developer account?" : "Need a workspace account?"}{" "}
-            <button
-              type="button"
-              onClick={() => {
-                setIsSignUp(!isSignUp);
-                setError(null);
-                setAuthNotAllowed(false);
-              }}
-              className="text-indigo-600 hover:underline font-bold transition-all cursor-pointer"
-            >
-              {isSignUp ? "Sign In" : "Sign Up"}
-            </button>
+            {forgotMode ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setForgotMode(false);
+                  setError(null);
+                  setSuccess(null);
+                }}
+                className="text-indigo-600 hover:underline font-bold transition-all cursor-pointer"
+              >
+                Back to Sign In
+              </button>
+            ) : (
+              <>
+                {isSignUp ? "Already have a developer account?" : "Need a workspace account?"}{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSignUp(!isSignUp);
+                    setError(null);
+                    setAuthNotAllowed(false);
+                    setSuccess(null);
+                  }}
+                  className="text-indigo-600 hover:underline font-bold transition-all cursor-pointer"
+                >
+                  {isSignUp ? "Sign In" : "Sign Up"}
+                </button>
+              </>
+            )}
           </p>
         </div>
 

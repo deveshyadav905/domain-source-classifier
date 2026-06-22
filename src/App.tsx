@@ -22,7 +22,7 @@ import {
 } from "./lib/cache";
 
 // Default sheet URL to match user request
-const DEFAULT_SHEET_URL = "https://docs.google.com/spreadsheets/d/1MBAlFt-YPa8NMsmyrPqGMOkJ5ukjLgODufd6bh4Hwik/edit?gid=0#gid=0";
+const DEFAULT_SHEET_URL = "";
 
 // Helper to convert 1-based column offset to A-Z/AA-ZZ labels
 function getColumnLetter(colIndex: number): string {
@@ -80,9 +80,9 @@ export default function App() {
   const [state, setState] = useState<AppState>({
     config: {
       url: DEFAULT_SHEET_URL,
-      spreadsheetId: "1MBAlFt-YPa8NMsmyrPqGMOkJ5ukjLgODufd6bh4Hwik",
-      gid: "0",
-      sheetName: "Sheet1",
+      spreadsheetId: "",
+      gid: "",
+      sheetName: "",
     },
     headers: [],
     domainColumnIndex: 0,
@@ -94,9 +94,9 @@ export default function App() {
     filterCategory: "",
     filterNews: "",
     searchTerm: "",
-    googleClientId: localStorage.getItem("google_client_id") || "",
-    googleAccessToken: localStorage.getItem("google_access_token") || null,
-    googleUserEmail: localStorage.getItem("google_user_email") || null,
+    googleClientId: "",
+    googleAccessToken: null,
+    googleUserEmail: null,
   });
 
   const [accessTokenInput, setAccessTokenInput] = useState("");
@@ -184,11 +184,14 @@ export default function App() {
     }
   }, []);
 
-  // Restore and synchronize user session securely across restarts/refresh
+  // Restore and synchronize user session securely across restarts/refresh whenever firebaseUser changes
   useEffect(() => {
+    if (!authInitialized) return;
+
+    const userKeySuffix = firebaseUser ? `_${firebaseUser.uid}` : "_guest";
     let hasRestored = false;
     try {
-      const saved = localStorage.getItem("publisher_autosave_session");
+      const saved = localStorage.getItem(`publisher_autosave_session${userKeySuffix}`);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.rows && parsed.rows.length > 0) {
@@ -201,15 +204,23 @@ export default function App() {
 
           setState((prev) => ({
             ...prev,
-            config: parsed.config || prev.config,
-            headers: parsed.headers || prev.headers,
-            domainColumnIndex: parsed.domainColumnIndex !== undefined ? parsed.domainColumnIndex : prev.domainColumnIndex,
+            config: parsed.config || {
+              url: DEFAULT_SHEET_URL,
+              spreadsheetId: "",
+              gid: "",
+              sheetName: "",
+            },
+            headers: parsed.headers || [],
+            domainColumnIndex: parsed.domainColumnIndex !== undefined ? parsed.domainColumnIndex : 0,
             rows: cleanedRows,
-            appMode: parsed.appMode || prev.appMode,
-            activeTab: parsed.activeTab || prev.activeTab,
+            appMode: parsed.appMode || "domains",
+            activeTab: parsed.activeTab || "database",
+            googleClientId: localStorage.getItem(`google_client_id${userKeySuffix}`) || "",
+            googleAccessToken: localStorage.getItem(`google_access_token${userKeySuffix}`) || null,
+            googleUserEmail: localStorage.getItem(`google_user_email${userKeySuffix}`) || null,
           }));
           hasRestored = true;
-          console.log("Active session automatically restored from cache cleanly.");
+          console.log(`Active session for ${userKeySuffix} automatically restored from cache cleanly.`);
         }
       }
     } catch (e) {
@@ -217,13 +228,33 @@ export default function App() {
     }
 
     if (!hasRestored) {
-      // Auto-fetch the initial sheet ONLY if no previous session is restored
-      fetchSpreadsheet(state.config.spreadsheetId, state.config.gid);
+      // Revert to default clean sheet config when switching to a user with no previous saved progress
+      setState((prev) => ({
+        ...prev,
+        config: {
+          url: DEFAULT_SHEET_URL,
+          spreadsheetId: "",
+          gid: "",
+          sheetName: "",
+        },
+        headers: [],
+        domainColumnIndex: 0,
+        rows: [],
+        appMode: "domains",
+        activeTab: "database",
+        googleClientId: localStorage.getItem(`google_client_id${userKeySuffix}`) || "",
+        googleAccessToken: localStorage.getItem(`google_access_token${userKeySuffix}`) || null,
+        googleUserEmail: localStorage.getItem(`google_user_email${userKeySuffix}`) || null,
+      }));
+      // Auto-fetch has been disabled to keep a clean environment unless intentionally triggered
     }
-  }, []);
+  }, [firebaseUser, authInitialized]);
 
   // Auto-save session state to localStorage on any core changes (save at any point)
   useEffect(() => {
+    if (!authInitialized) return;
+    const userKeySuffix = firebaseUser ? `_${firebaseUser.uid}` : "_guest";
+
     if (state.rows && state.rows.length > 0) {
       const saveData = {
         config: state.config,
@@ -233,9 +264,9 @@ export default function App() {
         appMode: state.appMode,
         activeTab: state.activeTab,
       };
-      localStorage.setItem("publisher_autosave_session", JSON.stringify(saveData));
+      localStorage.setItem(`publisher_autosave_session${userKeySuffix}`, JSON.stringify(saveData));
     }
-  }, [state.rows, state.headers, state.domainColumnIndex, state.config, state.appMode, state.activeTab]);
+  }, [state.rows, state.headers, state.domainColumnIndex, state.config, state.appMode, state.activeTab, firebaseUser, authInitialized]);
 
   // Parse Google Sheets Link for spreadsheetId & gid
   const parseSpreadsheetUrl = (url: string): { spreadsheetId: string; gid: string } => {
@@ -1012,6 +1043,9 @@ export default function App() {
   };
 
   const handleResetSession = () => {
+    const userKeySuffix = firebaseUser ? `_${firebaseUser.uid}` : "_guest";
+    localStorage.removeItem(`publisher_autosave_session${userKeySuffix}`);
+    localStorage.removeItem("publisher_autosave_session_guest");
     localStorage.removeItem("publisher_autosave_session");
     
     // Wipe all local storage caches related to domains, sources, and feeds
@@ -1023,9 +1057,9 @@ export default function App() {
       ...prev,
       config: {
         url: DEFAULT_SHEET_URL,
-        spreadsheetId: "1MBAlFt-YPa8NMsmyrPqGMOkJ5ukjLgODufd6bh4Hwik",
-        gid: "0",
-        sheetName: "Sheet1",
+        spreadsheetId: "",
+        gid: "",
+        sheetName: "",
       },
       headers: [],
       domainColumnIndex: 0,
@@ -1035,9 +1069,8 @@ export default function App() {
       filterNews: "",
       searchTerm: "",
     }));
-    // Now trigger loading default spreadsheet fresh
-    fetchSpreadsheet("1MBAlFt-YPa8NMsmyrPqGMOkJ5ukjLgODufd6bh4Hwik", "0");
-    addToast("Wiped session cache & re-loaded default sheet!", "info");
+    // Do NOT trigger any spreadsheet fetching. Let the workspace stay completely clean & empty as requested.
+    addToast("Wiped active session & classification caches successfully!", "success");
   };
 
   const handleClearCurrentResults = () => {
@@ -1069,6 +1102,7 @@ export default function App() {
 
   // Connect Google using direct Firebase login with spreadsheets scope, fallback to GSI Token client
   const handleConnectGoogle = async () => {
+    const userKeySuffix = firebaseUser ? `_${firebaseUser.uid}` : "_guest";
     // Attempt standard direct Firebase Auth Popup – zero-configuration & bulletproof in the build applet!
     try {
       const provider = new GoogleAuthProvider();
@@ -1085,8 +1119,8 @@ export default function App() {
           googleAccessToken: token,
           googleUserEmail: email,
         }));
-        localStorage.setItem("google_access_token", token);
-        localStorage.setItem("google_user_email", email);
+        localStorage.setItem(`google_access_token${userKeySuffix}`, token);
+        localStorage.setItem(`google_user_email${userKeySuffix}`, email);
         addToast("Google Sheets connected successfully!", "success");
         fetchSpreadsheet(state.config.spreadsheetId, state.config.gid, token);
         return;
@@ -1108,8 +1142,8 @@ export default function App() {
                 googleAccessToken: resp.access_token,
                 googleUserEmail: "Authorized Account",
               }));
-              localStorage.setItem("google_access_token", resp.access_token);
-              localStorage.setItem("google_user_email", "Authorized Account");
+              localStorage.setItem(`google_access_token${userKeySuffix}`, resp.access_token);
+              localStorage.setItem(`google_user_email${userKeySuffix}`, "Authorized Account");
               addToast("Google Access Authorized Successfully via Client ID!", "success");
               // Auto re-fetch sheet with new credentials immediately
               fetchSpreadsheet(state.config.spreadsheetId, state.config.gid, resp.access_token);
@@ -1128,15 +1162,17 @@ export default function App() {
   };
 
   const handleDisconnectGoogle = () => {
+    const userKeySuffix = firebaseUser ? `_${firebaseUser.uid}` : "_guest";
     setState((prev) => ({ ...prev, googleAccessToken: null, googleUserEmail: null }));
-    localStorage.removeItem("google_access_token");
-    localStorage.removeItem("google_user_email");
+    localStorage.removeItem(`google_access_token${userKeySuffix}`);
+    localStorage.removeItem(`google_user_email${userKeySuffix}`);
     addToast("Disconnected Google Account.", "info");
   };
 
   const handleSaveClientId = (clientId: string) => {
+    const userKeySuffix = firebaseUser ? `_${firebaseUser.uid}` : "_guest";
     setState((prev) => ({ ...prev, googleClientId: clientId }));
-    localStorage.setItem("google_client_id", clientId);
+    localStorage.setItem(`google_client_id${userKeySuffix}`, clientId);
     addToast("Google Client ID configured successfully!", "success");
   };
 
@@ -1144,13 +1180,14 @@ export default function App() {
   const handleManualAccessToken = () => {
     if (!accessTokenInput.trim()) return;
     const manualToken = accessTokenInput.trim();
+    const userKeySuffix = firebaseUser ? `_${firebaseUser.uid}` : "_guest";
     setState((prev) => ({
       ...prev,
       googleAccessToken: manualToken,
       googleUserEmail: "Manual Token Session",
     }));
-    localStorage.setItem("google_access_token", manualToken);
-    localStorage.setItem("google_user_email", "Manual Token Session");
+    localStorage.setItem(`google_access_token${userKeySuffix}`, manualToken);
+    localStorage.setItem(`google_user_email${userKeySuffix}`, "Manual Token Session");
     setShowTokenInputModal(false);
     setAccessTokenInput("");
     addToast("Integration Access Token Configured!", "success");

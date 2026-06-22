@@ -12,7 +12,7 @@ const PORT = 3000;
 // Parse typical JSON bodies up to 10mb
 app.use(express.json({ limit: "10mb" }));
 
-// Endpoint to fetch public Google Sheet as CSV
+// Endpoint to fetch public Google Sheet as CSV with multi-stage authorization bypasses
 app.get("/api/fetch-sheet", async (req, res) => {
   try {
     const { spreadsheetId, gid } = req.query;
@@ -24,11 +24,36 @@ app.get("/api/fetch-sheet", async (req, res) => {
     const headers: Record<string, string> = {
       "User-Agent": "aistudio-build",
     };
-    if (req.headers.authorization) {
+    if (req.headers.authorization && req.headers.authorization !== "Bearer null" && req.headers.authorization !== "Bearer undefined") {
       headers["Authorization"] = req.headers.authorization;
     }
 
-    const response = await fetch(url, { headers });
+    let response = await fetch(url, { headers });
+
+    // Fallback 1: If the request was authorized but failed, retry anonymously! 
+    // This allows loading papers/sheets that are "Anyone with the link can view" even if the credentials sent are invalid or expired.
+    if (!response.ok && headers["Authorization"]) {
+      console.log(`Private/Authorized fetch returned HTTP ${response.status}. Retrying as public anonymous request...`);
+      const anonResponse = await fetch(url, {
+        headers: { "User-Agent": "aistudio-build" },
+      });
+      if (anonResponse.ok) {
+        response = anonResponse;
+      }
+    }
+
+    // Fallback 2: If still unsuccessful, attempt the Google GViz Visualization query endpoint (superior bypass for public sheets)
+    if (!response.ok) {
+      const gvizUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv${gid ? `&gid=${gid}` : ""}`;
+      console.log(`Standard fetch failed with HTTP ${response.status}. Trying gviz fallback URL: ${gvizUrl}`);
+      const gvizResponse = await fetch(gvizUrl, {
+        headers: { "User-Agent": "aistudio-build" },
+      });
+      if (gvizResponse.ok) {
+        response = gvizResponse;
+      }
+    }
+
     if (!response.ok) {
       const errorStatus = response.status;
       return res.status(errorStatus === 401 ? 401 : 400).json({
@@ -135,6 +160,30 @@ app.get("/api/health", (req, res) => {
       (k) => !k.toLowerCase().includes("key") && !k.toLowerCase().includes("secret")
     ),
   });
+});
+
+// Dynamic endpoint serving firebase config structure directly to client-side window object
+app.get("/firebase-config.js", (req, res) => {
+  const cleanVal = (v: any) => {
+    if (!v) return "";
+    let s = String(v).trim();
+    if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+      s = s.slice(1, -1).trim();
+    }
+    return s;
+  };
+  res.setHeader("Content-Type", "application/javascript");
+  res.send(`
+    window.FIREBASE_CONFIG = {
+      projectId: ${JSON.stringify(process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || "")},
+      appId: ${JSON.stringify(process.env.VITE_FIREBASE_APP_ID || process.env.FIREBASE_APP_ID || "")},
+      apiKey: ${JSON.stringify(process.env.VITE_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY || "")},
+      authDomain: ${JSON.stringify(process.env.VITE_FIREBASE_AUTH_DOMAIN || process.env.FIREBASE_AUTH_DOMAIN || "")},
+      storageBucket: ${JSON.stringify(process.env.VITE_FIREBASE_STORAGE_BUCKET || process.env.FIREBASE_STORAGE_BUCKET || "")},
+      messagingSenderId: ${JSON.stringify(process.env.VITE_FIREBASE_MESSAGING_SENDER_ID || process.env.FIREBASE_MESSAGING_SENDER_ID || "")},
+      measurementId: ${JSON.stringify(process.env.VITE_FIREBASE_MEASUREMENT_ID || process.env.FIREBASE_MEASUREMENT_ID || "")}
+    };
+  `);
 });
 
 app.post("/api/classify", async (req, res) => {
