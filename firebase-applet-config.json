@@ -1,9 +1,9 @@
 {
-  "projectId": "",
-  "appId": "",
-  "apiKey": "",
-  "authDomain": "",
-  "storageBucket": "",
-  "messagingSenderId": "",
+  "projectId": "gen-lang-client-0554613017",
+  "appId": "1:330818368060:web:16fa76415295d0a6e04939",
+  "apiKey": "AIzaSyAI-vtZvjYPg3zpebDAHLq58Jf7ngWpyoo",
+  "authDomain": "gen-lang-client-0554613017.firebaseapp.com",
+  "storageBucket": "gen-lang-client-0554613017.firebasestorage.app",
+  "messagingSenderId": "330818368060",
   "measurementId": ""
 }

@@ -2,6 +2,7 @@ import { db } from "./firebase";
 import { 
   doc, 
   getDoc, 
+  getDocs,
   writeBatch, 
   collection, 
   addDoc, 
@@ -32,6 +33,13 @@ export function cleanForFirestore(obj: any): any {
     return res;
   }
   return obj;
+}
+
+// Helper to escape domain strings for safe Firestore Document ID reference (avoids multi-segment path segment errors caused by slashes)
+export function getSafeDocId(id: string): string {
+  if (!id) return "empty_id";
+  // Replace slashes and other non-standard Firestore ID characters with underscores, keeping alphanumeric, dots, and hyphens.
+  return id.replace(/[^a-zA-Z0-9.-]/g, "_");
 }
 
 // Dispatches a global event that src/App.tsx hears to trigger a beautiful toast
@@ -118,7 +126,8 @@ export async function getCachedDomains(domains: string[]): Promise<Record<string
       const promises = missingDomains.map(async (domain) => {
         const docClean = domain.toLowerCase().trim();
         if (!docClean) return;
-        const docRef = doc(db, "domain_cache", docClean);
+        const docId = getSafeDocId(docClean);
+        const docRef = doc(db, "domain_cache", docId);
         const snap = await getDoc(docRef);
         if (snap.exists()) {
           const data = snap.data();
@@ -136,7 +145,15 @@ export async function getCachedDomains(domains: string[]): Promise<Record<string
 }
 
 // Set domain classification results in the cache
-export async function setCachedDomains(results: Array<{ domain: string; category: string; isNewsPublisher: string; reasoning: string }>) {
+export async function setCachedDomains(results: Array<{ 
+  domain: string; 
+  category: string; 
+  isNewsPublisher: string; 
+  reasoning: string;
+  siteName?: string;
+  displayName?: string;
+  description?: string;
+}>) {
   // 1. Sync to local storage
   const localData: Record<string, any> = {};
   results.forEach(item => {
@@ -147,6 +164,9 @@ export async function setCachedDomains(results: Array<{ domain: string; category
         category: item.category,
         isNewsPublisher: item.isNewsPublisher,
         reasoning: item.reasoning,
+        siteName: item.siteName || null,
+        displayName: item.displayName || null,
+        description: item.description || null,
         createdAt: new Date().toISOString()
       };
     }
@@ -159,12 +179,16 @@ export async function setCachedDomains(results: Array<{ domain: string; category
     results.forEach((item) => {
       const docClean = item.domain.toLowerCase().trim();
       if (!docClean) return;
-      const ref = doc(db, "domain_cache", docClean);
+      const docId = getSafeDocId(docClean);
+      const ref = doc(db, "domain_cache", docId);
       batch.set(ref, cleanForFirestore({
         domain: docClean,
         category: item.category,
         isNewsPublisher: item.isNewsPublisher,
         reasoning: item.reasoning,
+        siteName: item.siteName || null,
+        displayName: item.displayName || null,
+        description: item.description || null,
         createdAt: serverTimestamp()
       }), { merge: true });
     });
@@ -218,7 +242,7 @@ export async function getCachedSources(sources: string[]): Promise<Record<string
 }
 
 // Set sources in the cache
-export async function setCachedSources(results: Array<{ source: string; country: string; language: string; category: string }>) {
+export async function setCachedSources(results: Array<{ source: string; country: string; language: string; category: string; sourcetype?: string }>) {
   // 1. Save locally
   const localData: Record<string, any> = {};
   results.forEach(item => {
@@ -229,6 +253,7 @@ export async function setCachedSources(results: Array<{ source: string; country:
         country: item.country,
         language: item.language,
         category: item.category,
+        sourcetype: item.sourcetype || null,
         createdAt: new Date().toISOString()
       };
     }
@@ -248,6 +273,7 @@ export async function setCachedSources(results: Array<{ source: string; country:
         country: item.country,
         language: item.language,
         category: item.category,
+        sourcetype: item.sourcetype || null,
         createdAt: serverTimestamp()
       }), { merge: true });
     });
@@ -278,7 +304,8 @@ export async function getCachedNewsFeeds(domains: string[]): Promise<Record<stri
       const promises = missing.map(async (domain) => {
         const docClean = domain.toLowerCase().trim();
         if (!docClean) return;
-        const docRef = doc(db, "news_feed_cache", docClean);
+        const docId = getSafeDocId(docClean);
+        const docRef = doc(db, "news_feed_cache", docId);
         const snap = await getDoc(docRef);
         if (snap.exists()) {
           const data = snap.data();
@@ -320,7 +347,8 @@ export async function setCachedNewsFeeds(results: Array<{ domain: string; countr
     results.forEach((item) => {
       const docClean = item.domain.toLowerCase().trim();
       if (!docClean) return;
-      const ref = doc(db, "news_feed_cache", docClean);
+      const docId = getSafeDocId(docClean);
+      const ref = doc(db, "news_feed_cache", docId);
       batch.set(ref, cleanForFirestore({
         domain: docClean,
         country: item.country,
@@ -383,5 +411,31 @@ export async function saveRunHistory(
       `Database Path: /history\nDatabase Operation: addDoc(collection)\nFailed Field: results\n\nFirestore Native Exception:\n${err.stack || err.message || err}`,
       "firestore"
     );
+  }
+}
+
+// Clear all cache/data in the databases (local & cloud)
+export async function wipeGlobalDatabaseCache() {
+  // 1. Wipe local caches
+  localStorage.removeItem("publisher_cache_domains");
+  localStorage.removeItem("publisher_cache_sources");
+  localStorage.removeItem("publisher_cache_feeds");
+
+  // 2. Wipe Firestore collections (domain_cache, source_cache, news_feed_cache)
+  try {
+    const collectionsToClear = ["domain_cache", "source_cache", "news_feed_cache"];
+    for (const collName of collectionsToClear) {
+      const snap = await getDocs(collection(db, collName));
+      if (!snap.empty) {
+        const batch = writeBatch(db);
+        snap.docs.forEach((docSnap) => {
+          batch.delete(docSnap.ref);
+        });
+        await batch.commit();
+      }
+    }
+  } catch (err) {
+    console.warn("Could not completely clear cloud cache:", err);
+    throw err;
   }
 }

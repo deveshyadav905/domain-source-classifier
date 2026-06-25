@@ -1,10 +1,17 @@
 export interface DomainRow {
   index: number; // Row index starting from 0 (index 0 is usually header, index 1 target row etc)
   domain: string;
+  d_url?: string;
   originalValues: string[];
   category?: "e-commerce" | "technology" | "blogs" | "other";
   isNewsPublisher?: "Yes" | "No";
   reasoning?: string;
+  siteName?: string;
+  displayName?: string;
+  description?: string;
+  trancoRank?: number | null;
+  trancoDate?: string;
+  trancoStatus?: "pending" | "processing" | "success" | "error";
   status: "pending" | "processing" | "success" | "error";
   errorMsg?: string;
   // News source validation fields
@@ -15,6 +22,8 @@ export interface DomainRow {
   newsCategory?: string;
   newsStatus?: "pending" | "processing" | "success" | "error";
   newsErrorMsg?: string;
+  newsPublisherStatus?: "pending" | "processing" | "success" | "error";
+  sourcetype?: string;
 }
 
 export interface ClassificationResult {
@@ -22,6 +31,9 @@ export interface ClassificationResult {
   category: "e-commerce" | "technology" | "blogs" | "other";
   isNewsPublisher: "Yes" | "No";
   reasoning: string;
+  siteName?: string;
+  displayName?: string;
+  description?: string;
 }
 
 export interface SpreadsheetConfig {
@@ -38,8 +50,17 @@ export interface AppState {
   headers: string[];
   domainColumnIndex: number;
   rows: DomainRow[];
+  domainsConfig?: SpreadsheetConfig;
+  domainsHeaders?: string[];
+  domainsDomainColumnIndex?: number;
+  domainsRows?: DomainRow[];
+  sourcesConfig?: SpreadsheetConfig;
+  sourcesHeaders?: string[];
+  sourcesDomainColumnIndex?: number;
+  sourcesRows?: DomainRow[];
   isFetchingSheet: boolean;
   isClassifying: boolean;
+  isCheckingNewsPublisher: boolean;
   activeTab: "database" | "analytics" | "instructions" | "history";
   appMode: AppMode;
   filterCategory: string;

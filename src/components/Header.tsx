@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Globe, FileSpreadsheet, Sparkles, Check, Database, HelpCircle, LogOut, History, User } from "lucide-react";
+import { Globe, FileSpreadsheet, Sparkles, Check, Database, HelpCircle, LogOut, History, User, Key } from "lucide-react";
 
 interface HeaderProps {
   sheetUrlInput: string;
@@ -19,6 +19,8 @@ interface HeaderProps {
   firebaseUser: any | null;
   onSignOutFirebase: () => void;
   onResetSession: () => void;
+  customGeminiApiKey: string;
+  setCustomGeminiApiKey: (key: string) => void;
 }
 
 export default function Header({
@@ -39,6 +41,8 @@ export default function Header({
   firebaseUser,
   onSignOutFirebase,
   onResetSession,
+  customGeminiApiKey,
+  setCustomGeminiApiKey,
 }: HeaderProps) {
   const [urlError, setUrlError] = useState("");
 
@@ -251,6 +255,44 @@ export default function Header({
                 <HelpCircle className="h-3.5 w-3.5 text-gray-400" />
                 Guides &amp; Configuration
               </button>
+            </div>
+          </div>
+
+          {/* Custom API Key zone */}
+          <div className="border-t border-gray-200/60 pt-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs bg-amber-50/20 px-4 py-3 rounded-xl border border-amber-200/40">
+            <div className="flex items-start gap-2.5">
+              <span className="p-1.5 rounded-lg bg-amber-50 border border-amber-200 mt-0.5 shrink-0 flex items-center justify-center">
+                <Key className="h-4 w-4 text-amber-700" />
+              </span>
+              <div>
+                <p className="font-bold text-gray-900 flex items-center gap-1.5">
+                  Custom Gemini API Key
+                  <span className="text-[9px] font-mono font-bold px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 uppercase">Optional</span>
+                </p>
+                <p className="text-[10px] text-gray-500 mt-0.5">Use your personal developer API key to bypass global rate-limits &amp; free tier quotas (saved securely in your browser storage).</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 max-w-sm w-full shrink-0">
+              <div className="relative w-full">
+                <Key className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-gray-400" />
+                <input
+                  type="password"
+                  placeholder="Paste your Gemini API Key (e.g., AIzaSy...)"
+                  value={customGeminiApiKey}
+                  onChange={(e) => setCustomGeminiApiKey(e.target.value)}
+                  className="pl-8 pr-3 py-1.5 text-xs font-mono rounded-lg border border-gray-300 focus:border-amber-500 focus:outline-hidden bg-white shadow-2xs w-full"
+                />
+              </div>
+              {customGeminiApiKey && (
+                <button
+                  type="button"
+                  onClick={() => setCustomGeminiApiKey("")}
+                  className="px-2.5 py-1.5 text-[10.5px] text-rose-600 hover:bg-rose-50 rounded-lg font-bold border border-rose-200 shrink-0 cursor-pointer transition-colors"
+                  title="Clear key and revert to standard server default key"
+                >
+                  Clear Key
+                </button>
+              )}
             </div>
           </div>
         </div>

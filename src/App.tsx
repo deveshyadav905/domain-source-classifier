@@ -16,9 +16,8 @@ import {
   setCachedDomains, 
   getCachedSources, 
   setCachedSources, 
-  getCachedNewsFeeds, 
-  setCachedNewsFeeds, 
-  saveRunHistory 
+  saveRunHistory,
+  wipeGlobalDatabaseCache
 } from "./lib/cache";
 
 // Default sheet URL to match user request
@@ -34,6 +33,19 @@ function getColumnLetter(colIndex: number): string {
     temp = Math.floor((temp - modulo) / 26);
   }
   return letter;
+}
+
+function toTitleCase(str: string): string {
+  if (!str) return "";
+  return str
+    .split(/[-_.\s]+/)
+    .filter(Boolean)
+    .map((word) => {
+      if (word.toLowerCase() === "and") return "and";
+      if (word.toLowerCase() === "or") return "or";
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(" ");
 }
 
 // Simple but robust CSV line parser
@@ -76,6 +88,22 @@ function parseCSV(text: string): string[][] {
   return lines.filter((r) => r.length > 0 && r.some((cell) => cell !== ""));
 }
 
+// Helper to normalize content categories (e.g. converting "Technology & Innovation" to comma separated list "Technology, Innovation")
+export function normalizeCategory(cat?: string): string | undefined {
+  if (!cat) return undefined;
+  let normalized = cat.trim();
+  // Standardize known combinations
+  if (normalized.toLowerCase().includes("technology & innovation") || normalized.toLowerCase() === "technology & innovation") {
+    return "Technology, Innovation";
+  }
+  if (normalized.includes(" & ")) {
+    normalized = normalized.replace(/\s*&\s*/g, ", ");
+  } else if (normalized.toLowerCase().includes(" and ")) {
+    normalized = normalized.replace(/\s+and\s+/gi, ", ");
+  }
+  return normalized;
+}
+
 export default function App() {
   const [state, setState] = useState<AppState>({
     config: {
@@ -87,8 +115,27 @@ export default function App() {
     headers: [],
     domainColumnIndex: 0,
     rows: [],
+    domainsConfig: {
+      url: DEFAULT_SHEET_URL,
+      spreadsheetId: "",
+      gid: "",
+      sheetName: "",
+    },
+    domainsHeaders: [],
+    domainsDomainColumnIndex: 0,
+    domainsRows: [],
+    sourcesConfig: {
+      url: DEFAULT_SHEET_URL,
+      spreadsheetId: "",
+      gid: "",
+      sheetName: "",
+    },
+    sourcesHeaders: [],
+    sourcesDomainColumnIndex: 0,
+    sourcesRows: [],
     isFetchingSheet: false,
     isClassifying: false,
+    isCheckingNewsPublisher: false,
     activeTab: "database",
     appMode: "domains",
     filterCategory: "",
@@ -100,6 +147,15 @@ export default function App() {
   });
 
   const [accessTokenInput, setAccessTokenInput] = useState("");
+  const [customGeminiApiKey, setCustomGeminiApiKeyState] = useState(() => {
+    return localStorage.getItem("custom_gemini_api_key") || "";
+  });
+
+  const setCustomGeminiApiKey = (key: string) => {
+    setCustomGeminiApiKeyState(key);
+    localStorage.setItem("custom_gemini_api_key", key);
+  };
+
   const [showTokenInputModal, setShowTokenInputModal] = useState(false);
   const [isUpdatingSheet, setIsUpdatingSheet] = useState(false);
   const [sheetUpdateResult, setSheetUpdateResult] = useState<{ type: "success" | "error"; msg: string } | null>(null);
@@ -146,10 +202,12 @@ export default function App() {
   }, []);
 
   const [isAnalyzingNews, setIsAnalyzingNews] = useState(false);
+  const [isFetchingTranco, setIsFetchingTranco] = useState(false);
   const [apiLimitError, setApiLimitError] = useState<string | null>(null);
 
   const domainAbortControllerRef = useRef<AbortController | null>(null);
   const newsAbortControllerRef = useRef<AbortController | null>(null);
+  const trancoAbortControllerRef = useRef<AbortController | null>(null);
 
   // Firebase auth state tracking
   const [firebaseUser, setFirebaseUser] = useState<any | null>(null);
@@ -195,12 +253,18 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.rows && parsed.rows.length > 0) {
-          // Clean up any remaining processing rows so they don't look stuck or keep running in automode
-          const cleanedRows = parsed.rows.map((row: any) => ({
-            ...row,
-            status: row.status === "processing" ? "pending" : row.status,
-            newsStatus: row.newsStatus === "processing" ? "pending" : row.newsStatus,
-          }));
+          const cleanRowsList = (rows: any[]) => {
+            if (!rows) return [];
+            return rows.map((row: any) => ({
+              ...row,
+              status: row.status === "processing" ? "pending" : row.status,
+              newsStatus: row.newsStatus === "processing" ? "pending" : row.newsStatus,
+            }));
+          };
+
+          const cleanedRows = cleanRowsList(parsed.rows);
+          const cleanedDomainsRows = cleanRowsList(parsed.domainsRows || []);
+          const cleanedSourcesRows = cleanRowsList(parsed.sourcesRows || []);
 
           setState((prev) => ({
             ...prev,
@@ -213,6 +277,32 @@ export default function App() {
             headers: parsed.headers || [],
             domainColumnIndex: parsed.domainColumnIndex !== undefined ? parsed.domainColumnIndex : 0,
             rows: cleanedRows,
+            domainsConfig: parsed.domainsConfig || (parsed.appMode !== "sources" ? parsed.config : undefined) || {
+              url: DEFAULT_SHEET_URL,
+              spreadsheetId: "",
+              gid: "",
+              sheetName: "",
+            },
+            domainsHeaders: parsed.domainsHeaders || (parsed.appMode !== "sources" ? parsed.headers : undefined) || [],
+            domainsDomainColumnIndex: parsed.domainsDomainColumnIndex !== undefined 
+              ? parsed.domainsDomainColumnIndex 
+              : (parsed.appMode !== "sources" ? parsed.domainColumnIndex : 0),
+            domainsRows: cleanedDomainsRows.length > 0 
+              ? cleanedDomainsRows 
+              : (parsed.appMode !== "sources" ? cleanedRows : []),
+            sourcesConfig: parsed.sourcesConfig || (parsed.appMode === "sources" ? parsed.config : undefined) || {
+              url: DEFAULT_SHEET_URL,
+              spreadsheetId: "",
+              gid: "",
+              sheetName: "",
+            },
+            sourcesHeaders: parsed.sourcesHeaders || (parsed.appMode === "sources" ? parsed.headers : undefined) || [],
+            sourcesDomainColumnIndex: parsed.sourcesDomainColumnIndex !== undefined 
+              ? parsed.sourcesDomainColumnIndex 
+              : (parsed.appMode === "sources" ? parsed.domainColumnIndex : 0),
+            sourcesRows: cleanedSourcesRows.length > 0 
+              ? cleanedSourcesRows 
+              : (parsed.appMode === "sources" ? cleanedRows : []),
             appMode: parsed.appMode || "domains",
             activeTab: parsed.activeTab || "database",
             googleClientId: localStorage.getItem(`google_client_id${userKeySuffix}`) || "",
@@ -240,6 +330,24 @@ export default function App() {
         headers: [],
         domainColumnIndex: 0,
         rows: [],
+        domainsConfig: {
+          url: DEFAULT_SHEET_URL,
+          spreadsheetId: "",
+          gid: "",
+          sheetName: "",
+        },
+        domainsHeaders: [],
+        domainsDomainColumnIndex: 0,
+        domainsRows: [],
+        sourcesConfig: {
+          url: DEFAULT_SHEET_URL,
+          spreadsheetId: "",
+          gid: "",
+          sheetName: "",
+        },
+        sourcesHeaders: [],
+        sourcesDomainColumnIndex: 0,
+        sourcesRows: [],
         appMode: "domains",
         activeTab: "database",
         googleClientId: localStorage.getItem(`google_client_id${userKeySuffix}`) || "",
@@ -261,12 +369,71 @@ export default function App() {
         headers: state.headers,
         domainColumnIndex: state.domainColumnIndex,
         rows: state.rows,
+        domainsConfig: state.domainsConfig,
+        domainsHeaders: state.domainsHeaders,
+        domainsDomainColumnIndex: state.domainsDomainColumnIndex,
+        domainsRows: state.domainsRows,
+        sourcesConfig: state.sourcesConfig,
+        sourcesHeaders: state.sourcesHeaders,
+        sourcesDomainColumnIndex: state.sourcesDomainColumnIndex,
+        sourcesRows: state.sourcesRows,
         appMode: state.appMode,
         activeTab: state.activeTab,
       };
       localStorage.setItem(`publisher_autosave_session${userKeySuffix}`, JSON.stringify(saveData));
     }
-  }, [state.rows, state.headers, state.domainColumnIndex, state.config, state.appMode, state.activeTab, firebaseUser, authInitialized]);
+  }, [
+    state.rows, state.headers, state.domainColumnIndex, state.config, state.appMode, state.activeTab, 
+    state.domainsRows, state.domainsHeaders, state.domainsDomainColumnIndex, state.domainsConfig,
+    state.sourcesRows, state.sourcesHeaders, state.sourcesDomainColumnIndex, state.sourcesConfig,
+    firebaseUser, authInitialized
+  ]);
+
+  // Keep separate mode-specific states in sync with the active state
+  useEffect(() => {
+    if (!authInitialized) return;
+    setState((prev) => {
+      if (prev.appMode === "domains") {
+        if (
+          prev.domainsConfig?.url === prev.config.url &&
+          prev.domainsConfig?.spreadsheetId === prev.config.spreadsheetId &&
+          prev.domainsConfig?.gid === prev.config.gid &&
+          prev.domainsConfig?.sheetName === prev.config.sheetName &&
+          prev.domainsHeaders === prev.headers &&
+          prev.domainsDomainColumnIndex === prev.domainColumnIndex &&
+          prev.domainsRows === prev.rows
+        ) {
+          return prev;
+        }
+        return {
+          ...prev,
+          domainsConfig: prev.config,
+          domainsHeaders: prev.headers,
+          domainsDomainColumnIndex: prev.domainColumnIndex,
+          domainsRows: prev.rows,
+        };
+      } else {
+        if (
+          prev.sourcesConfig?.url === prev.config.url &&
+          prev.sourcesConfig?.spreadsheetId === prev.config.spreadsheetId &&
+          prev.sourcesConfig?.gid === prev.config.gid &&
+          prev.sourcesConfig?.sheetName === prev.config.sheetName &&
+          prev.sourcesHeaders === prev.headers &&
+          prev.sourcesDomainColumnIndex === prev.domainColumnIndex &&
+          prev.sourcesRows === prev.rows
+        ) {
+          return prev;
+        }
+        return {
+          ...prev,
+          sourcesConfig: prev.config,
+          sourcesHeaders: prev.headers,
+          sourcesDomainColumnIndex: prev.domainColumnIndex,
+          sourcesRows: prev.rows,
+        };
+      }
+    });
+  }, [state.config, state.headers, state.domainColumnIndex, state.rows, state.appMode, authInitialized]);
 
   // Parse Google Sheets Link for spreadsheetId & gid
   const parseSpreadsheetUrl = (url: string): { spreadsheetId: string; gid: string } => {
@@ -314,6 +481,10 @@ export default function App() {
       const data = await res.json();
 
       if (!res.ok || !data.success) {
+        if (res.status === 401) {
+          handleDisconnectGoogle();
+          throw new Error("Your Google Sheets connection has expired. Please re-connect by clicking 'Connect Google Docs' to refresh access.");
+        }
         throw new Error(data.error || "Failed to load sheet data. Ensure the document is shared publicly or you are logged in.");
       }
 
@@ -360,12 +531,17 @@ export default function App() {
         detectedCol = bestCol;
       }
 
-      // Check if Category, News Publisher, Reasoning already exist in the sheet
+      // Check if Category, News Publisher, Reasoning, Site Name, Display Name, Description already exist in the sheet
+      let siteNameColIdx = headers.findIndex((h) => h.toLowerCase() === "site name" || h.toLowerCase() === "sitename");
+      let displayNameColIdx = headers.findIndex((h) => h.toLowerCase() === "display name" || h.toLowerCase() === "displayname");
       let catColIdx = headers.findIndex((h) => h.toLowerCase() === "category" || h.toLowerCase() === "news category" || h.toLowerCase() === "sub-category");
       let newsColIdx = headers.findIndex((h) => h.toLowerCase() === "news publisher");
-      let reasonColIdx = headers.findIndex((h) => h.toLowerCase() === "reasoning" || h.toLowerCase() === "ai description / reasoning" || h.toLowerCase() === "ai domain description");
+      let descColIdx = headers.findIndex((h) => h.toLowerCase() === "domain description" || h.toLowerCase() === "description");
+      let trancoColIdx = headers.findIndex((h) => h.toLowerCase() === "tranco traffic rank" || h.toLowerCase() === "tranco rank" || h.toLowerCase() === "priority");
+      let reasonColIdx = headers.findIndex((h) => h.toLowerCase() === "reasoning" || h.toLowerCase() === "ai reasoning" || h.toLowerCase() === "ai description / reasoning" || h.toLowerCase() === "ai domain description");
       let countryColIdx = headers.findIndex((h) => h.toLowerCase() === "country");
       let langColIdx = headers.findIndex((h) => h.toLowerCase() === "language" || h.toLowerCase() === "lang");
+      let sourcetypeColIdx = headers.findIndex((h) => h.toLowerCase() === "sourcetype" || h.toLowerCase() === "source type");
 
       const isSourcesMode = state.appMode === "sources";
 
@@ -385,27 +561,56 @@ export default function App() {
         }
 
         // Read pre-existing values if any
+        const existingSiteName = siteNameColIdx !== -1 ? rawRow[siteNameColIdx] : undefined;
+        const existingDisplayName = displayNameColIdx !== -1 ? rawRow[displayNameColIdx] : undefined;
         const existingCat = catColIdx !== -1 ? (rawRow[catColIdx] as any) : undefined;
         const existingNews = newsColIdx !== -1 ? (rawRow[newsColIdx] as any) : undefined;
+        const existingDesc = descColIdx !== -1 ? rawRow[descColIdx] : undefined;
+        const existingTranco = trancoColIdx !== -1 ? rawRow[trancoColIdx] : undefined;
         const existingReason = reasonColIdx !== -1 ? rawRow[reasonColIdx] : undefined;
         const existingCountry = countryColIdx !== -1 ? rawRow[countryColIdx] : undefined;
         const existingLang = langColIdx !== -1 ? rawRow[langColIdx] : undefined;
+        const existingSourceType = sourcetypeColIdx !== -1 ? rawRow[sourcetypeColIdx] : undefined;
 
         const isSuccess = existingCat && existingNews;
-        const hasNewsSuccess = existingCountry && existingLang;
+        const hasNewsSuccess = isSourcesMode
+          ? (existingCountry && existingLang && existingCat && existingSourceType)
+          : (existingCountry && existingLang);
+
+        let parsedTrancoRank: number | null | undefined = undefined;
+        let trancoStatus: "pending" | "processing" | "success" | "error" = "pending";
+        let trancoDate: string | undefined = undefined;
+        if (existingTranco !== undefined && existingTranco !== null && existingTranco !== "" && existingTranco !== "-") {
+          const num = parseInt(String(existingTranco).replace(/[^\d]/g, ""), 10);
+          if (!isNaN(num)) {
+            parsedTrancoRank = num;
+            trancoStatus = "success";
+            trancoDate = "Loaded from Sheet";
+          }
+        }
 
         return {
           index: i,
           domain: cleanDomain || rawDomain,
+          d_url: rawDomain,
           originalValues: rawRow,
           category: isSuccess ? existingCat : undefined,
           isNewsPublisher: isSuccess ? existingNews : undefined,
           reasoning: isSuccess ? existingReason : undefined,
+          siteName: existingSiteName,
+          displayName: existingDisplayName,
+          description: existingDesc || (isSuccess ? existingReason : undefined),
+          trancoRank: parsedTrancoRank,
+          trancoStatus,
+          trancoDate,
           country: existingCountry,
           language: existingLang,
-          newsCategory: isSuccess ? existingCat : undefined,
+          newsCategory: isSourcesMode 
+            ? (existingCat ? normalizeCategory(existingCat) : undefined)
+            : (isSuccess ? normalizeCategory(existingCat) : undefined),
           status: isSuccess ? "success" as const : "pending" as const,
           newsStatus: hasNewsSuccess ? "success" as const : "pending" as const,
+          sourcetype: existingSourceType,
         };
       });
 
@@ -423,6 +628,234 @@ export default function App() {
     }
   };
 
+  const handleFetchTrancoRanks = async (indicesToRun: number[]) => {
+    if (indicesToRun.length === 0) {
+      addToast("No domain records selected for priority rank retrieval.", "info");
+      return;
+    }
+
+    if (trancoAbortControllerRef.current) {
+      trancoAbortControllerRef.current.abort();
+    }
+    trancoAbortControllerRef.current = new AbortController();
+    const signal = trancoAbortControllerRef.current.signal;
+
+    setIsFetchingTranco(true);
+    addToast(`Retrieving global priority rankings for ${indicesToRun.length} domains...`, "info");
+
+    setState((prev) => {
+      const updatedRows = prev.rows.map((r) =>
+        indicesToRun.includes(r.index) ? { ...r, trancoStatus: "processing" as const } : r
+      );
+      return { ...prev, rows: updatedRows };
+    });
+
+    try {
+      const BATCH_SIZE = 15;
+      for (let b = 0; b < indicesToRun.length; b += BATCH_SIZE) {
+        if (signal.aborted) {
+          throw new DOMException("Aborted", "AbortError");
+        }
+
+        const chunkIndices = indicesToRun.slice(b, b + BATCH_SIZE);
+        // Map indices to domain string values
+        const chunkDomains = chunkIndices.map((idx) => {
+          const match = state.rows.find((r) => r.index === idx);
+          return match ? match.domain : "";
+        }).filter(Boolean);
+
+        if (chunkDomains.length === 0) continue;
+
+        const res = await fetch("/api/tranco", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ domains: chunkDomains }),
+          signal,
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `HTTP ${res.status}: Priority ranking fetch failed.`);
+        }
+
+        const { results } = await res.json();
+        
+        setState((prev) => {
+          const updatedRows = prev.rows.map((row) => {
+            if (!chunkIndices.includes(row.index)) return row;
+
+            const match = results.find(
+              (r: any) => String(r.domain).toLowerCase().trim() === String(row.domain).toLowerCase().trim()
+            );
+
+            if (match) {
+              return {
+                ...row,
+                trancoRank: match.rank,
+                trancoDate: match.date,
+                trancoStatus: match.status === "success" ? ("success" as const) : ("error" as const),
+              };
+            }
+            return {
+              ...row,
+              trancoStatus: "error" as const,
+            };
+          });
+          return { ...prev, rows: updatedRows };
+        });
+      }
+
+      addToast("Tranco priority ranks obtained correctly!", "success");
+    } catch (err: any) {
+      if (err.name === "AbortError" || signal.aborted) {
+        console.log("Tranco rank fetching process got aborted.");
+      } else {
+        console.error("Tranco query error:", err);
+        addToast(err.message || "Failed to retrieve priority rankings.", "error");
+        
+        setState((prev) => {
+          const updatedRows = prev.rows.map((r) =>
+            indicesToRun.includes(r.index) && r.trancoStatus === "processing"
+              ? { ...r, trancoStatus: "error" as const }
+              : r
+          );
+          return { ...prev, rows: updatedRows };
+        });
+      }
+    } finally {
+      setIsFetchingTranco(false);
+      trancoAbortControllerRef.current = null;
+    }
+  };
+
+  // Run fast Yes/No News Publisher checking
+  const checkNewsPublisherBatch = async (rawIndices: number[]) => {
+    const indicesToRun = rawIndices.filter(
+      (idx) => state.rows[idx] && state.rows[idx].newsPublisherStatus !== "success"
+    );
+
+    if (indicesToRun.length === 0 || state.isCheckingNewsPublisher) {
+      if (rawIndices.length > 0 && indicesToRun.length === 0) {
+        addToast("All selected domains have already been checked for news publisher status!", "info");
+      }
+      return;
+    }
+
+    if (domainAbortControllerRef.current) {
+      domainAbortControllerRef.current.abort();
+    }
+    domainAbortControllerRef.current = new AbortController();
+    const signal = domainAbortControllerRef.current.signal;
+
+    setState((prev) => {
+      const updatedRows = prev.rows.map((r) =>
+        indicesToRun.includes(r.index) ? { ...r, newsPublisherStatus: "processing" as const } : r
+      );
+      return { ...prev, rows: updatedRows, isCheckingNewsPublisher: true };
+    });
+
+    try {
+      const BATCH_SIZE = 100;
+      for (let b = 0; b < indicesToRun.length; b += BATCH_SIZE) {
+        if (signal.aborted) {
+          throw new DOMException("Aborted", "AbortError");
+        }
+
+        const chunkIndices = indicesToRun.slice(b, b + BATCH_SIZE);
+        const rowsToAnalyze = chunkIndices.map((idx) => state.rows[idx]);
+        const domainsToCheck = rowsToAnalyze.map((r) => r.domain);
+
+        const res = await fetch("/api/check-news-publisher", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ domains: domainsToCheck, customApiKey: customGeminiApiKey }),
+          signal,
+        });
+
+        const isLimitResponse = res.status === 429;
+        let data: any = {};
+        try {
+          data = await res.json();
+        } catch (jsonErr) {}
+
+        if (signal.aborted) {
+          throw new DOMException("Aborted", "AbortError");
+        }
+
+        const hasLimitMessage = 
+          data.error?.toLowerCase().includes("limit") || 
+          data.error?.toLowerCase().includes("quota") || 
+          data.error?.toLowerCase().includes("exhausted") || 
+          data.error?.toLowerCase().includes("429");
+
+        if (isLimitResponse || !res.ok || !data.success || hasLimitMessage) {
+          if (isLimitResponse || hasLimitMessage) {
+            const errMsg = data.error || data.message || "AI/Gemini quota limit reached.";
+            setApiLimitError(errMsg);
+            handleStopAllProcesses();
+            throw new Error(`API_LIMIT_REACHED: ${errMsg}`);
+          }
+          throw new Error(data.error || "Batch news status check failed.");
+        }
+
+        const freshResults = data.results as any[];
+        const finalResultsMap: Record<string, any> = {};
+        freshResults.forEach((item) => {
+          finalResultsMap[String(item.domain).toLowerCase().trim()] = {
+            isNewsPublisher: item.isNewsPublisher,
+            reasoning: item.reasoning,
+            newsPublisherStatus: "success" as const
+          };
+        });
+
+        setState((prev) => {
+          const updatedRows = prev.rows.map((row) => {
+            if (!chunkIndices.includes(row.index)) return row;
+
+            const match = finalResultsMap[row.domain.toLowerCase().trim()];
+            if (match) {
+              return {
+                ...row,
+                isNewsPublisher: match.isNewsPublisher,
+                reasoning: match.reasoning,
+                newsPublisherStatus: "success" as const,
+              };
+            } else {
+              return {
+                ...row,
+                newsPublisherStatus: "error" as const,
+                errorMsg: "No status returned for this domain.",
+              };
+            }
+          });
+          return { ...prev, rows: updatedRows };
+        });
+      }
+
+      addToast("Successfully checked news publisher status for selected domains!", "success");
+    } catch (err: any) {
+      if (err.name === "AbortError" || err.message === "Aborted") {
+        console.log("News publisher check process aborted by user.");
+      } else {
+        const msg = err.message || String(err);
+        console.log(`Error checking news status: ${msg}`);
+        addToast(`News check error: ${msg}`, "error");
+
+        setState((prev) => {
+          const updatedRows = prev.rows.map((r) =>
+            indicesToRun.includes(r.index) && r.newsPublisherStatus === "processing"
+              ? { ...r, newsPublisherStatus: "error" as const, errorMsg: msg }
+              : r
+          );
+          return { ...prev, rows: updatedRows };
+        });
+      }
+    } finally {
+      setState((prev) => ({ ...prev, isCheckingNewsPublisher: false }));
+      domainAbortControllerRef.current = null;
+    }
+  };
+
   // Run the batch domain classification using caching and Gemini fallback
   const classifyDomainsBatch = async (rawIndices: number[]) => {
     // Only hit pending items: filter out successes!
@@ -436,6 +869,39 @@ export default function App() {
       return;
     }
 
+    // Optimization: separate into news publishers (or unchecked) and non-news publishers
+    const newsPublishersIndices = indicesToRun.filter(
+      (idx) => state.rows[idx] && state.rows[idx].isNewsPublisher !== "No"
+    );
+    const nonNewsPublishersIndices = indicesToRun.filter(
+      (idx) => state.rows[idx] && state.rows[idx].isNewsPublisher === "No"
+    );
+
+    if (nonNewsPublishersIndices.length > 0) {
+      setState((prev) => {
+        const updatedRows = prev.rows.map((row) => {
+          if (nonNewsPublishersIndices.includes(row.index)) {
+            return {
+              ...row,
+              category: "other" as const,
+              siteName: toTitleCase(row.domain.split('.')[0]),
+              displayName: toTitleCase(row.domain.split('.')[0]),
+              description: "Non-news publisher domain (skipped metadata fetch to save tokens).",
+              status: "success" as const,
+            };
+          }
+          return row;
+        });
+        return { ...prev, rows: updatedRows };
+      });
+      console.log(`Skipped metadata fetch for ${nonNewsPublishersIndices.length} non-news publisher domains to save tokens.`);
+    }
+
+    if (newsPublishersIndices.length === 0) {
+      addToast("Classification complete (all non-news domains skipped to save tokens).", "success");
+      return;
+    }
+
     if (domainAbortControllerRef.current) {
       domainAbortControllerRef.current.abort();
     }
@@ -444,19 +910,22 @@ export default function App() {
 
     setState((prev) => {
       const updatedRows = prev.rows.map((r) =>
-        indicesToRun.includes(r.index) ? { ...r, status: "processing" as const } : r
+        newsPublishersIndices.includes(r.index) ? { ...r, status: "processing" as const } : r
       );
       return { ...prev, rows: updatedRows, isClassifying: true };
     });
 
+    let currentChunk: number[] = [];
+
     try {
-      const BATCH_SIZE = 5;
-      for (let b = 0; b < indicesToRun.length; b += BATCH_SIZE) {
+      const BATCH_SIZE = 40;
+      for (let b = 0; b < newsPublishersIndices.length; b += BATCH_SIZE) {
         if (signal.aborted) {
           throw new DOMException("Aborted", "AbortError");
         }
 
-        const chunkIndices = indicesToRun.slice(b, b + BATCH_SIZE);
+        const chunkIndices = newsPublishersIndices.slice(b, b + BATCH_SIZE);
+        currentChunk = chunkIndices;
         const rowsToAnalyze = chunkIndices.map((idx) => state.rows[idx]);
         const domainsToClassify = rowsToAnalyze.map((r) => r.domain);
 
@@ -472,8 +941,10 @@ export default function App() {
 
         rowsToAnalyze.forEach((row) => {
           const cleanDom = row.domain.toLowerCase().trim();
-          if (cachedData[cleanDom]) {
-            hitRows.push({ index: row.index, data: cachedData[cleanDom] });
+          const cached = cachedData[cleanDom];
+          // Ensure we have a valid cache hit that includes the updated metadata properties (siteName, displayName)
+          if (cached && (cached.siteName || cached.displayName)) {
+            hitRows.push({ index: row.index, data: cached });
           } else {
             missIndices.push(row.index);
             missDomains.push(row.domain);
@@ -488,6 +959,9 @@ export default function App() {
             category: data.category,
             isNewsPublisher: data.isNewsPublisher,
             reasoning: data.reasoning + " (Retrieved from Cache)",
+            siteName: data.siteName,
+            displayName: data.displayName,
+            description: data.description,
             status: "success" as const
           };
         });
@@ -500,7 +974,7 @@ export default function App() {
           const res = await fetch("/api/classify", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ domains: missDomains }),
+            body: JSON.stringify({ domains: missDomains, customApiKey: customGeminiApiKey }),
             signal,
           });
 
@@ -543,6 +1017,9 @@ export default function App() {
               category: item.category,
               isNewsPublisher: item.isNewsPublisher,
               reasoning: item.reasoning,
+              siteName: item.siteName,
+              displayName: item.displayName,
+              description: item.description,
               status: "success" as const
             };
           });
@@ -564,6 +1041,9 @@ export default function App() {
                 category: match.category,
                 isNewsPublisher: match.isNewsPublisher,
                 reasoning: match.reasoning,
+                siteName: match.siteName,
+                displayName: match.displayName,
+                description: match.description,
                 status: "success" as const,
               };
             } else {
@@ -610,13 +1090,18 @@ export default function App() {
 
       const isLimit = err.message?.startsWith("API_LIMIT_REACHED");
       if (isLimit) {
-        // Reset remaining processing rows to pending on rate limits
+        const cleanMsg = err.message.replace("API_LIMIT_REACHED: ", "");
         setState((prev) => {
-          const updatedRows = prev.rows.map((r) =>
-            indicesToRun.includes(r.index) && r.status === "processing"
-              ? { ...r, status: "pending" as const }
-              : r
-          );
+          const updatedRows = prev.rows.map((r) => {
+            if (!indicesToRun.includes(r.index)) return r;
+            if (currentChunk.includes(r.index)) {
+              return { ...r, status: "error" as const, errorMsg: cleanMsg };
+            }
+            if (r.status === "processing") {
+              return { ...r, status: "pending" as const };
+            }
+            return r;
+          });
           return { ...prev, rows: updatedRows, isClassifying: false };
         });
         return;
@@ -624,11 +1109,20 @@ export default function App() {
 
       console.error(err);
       setState((prev) => {
-        const updatedRows = prev.rows.map((r) =>
-          indicesToRun.includes(r.index) && r.status === "processing"
-            ? { ...r, status: "error" as const, errorMsg: err.message || "Cache check or AI classification failed" }
-            : r
-        );
+        const updatedRows = prev.rows.map((r) => {
+          if (!indicesToRun.includes(r.index)) return r;
+          if (currentChunk.includes(r.index)) {
+            return {
+              ...r,
+              status: "error" as const,
+              errorMsg: err.message || "Cache check or AI classification failed"
+            };
+          }
+          if (r.status === "processing") {
+            return { ...r, status: "pending" as const };
+          }
+          return r;
+        });
         return { ...prev, rows: updatedRows, isClassifying: false };
       });
     } finally {
@@ -667,198 +1161,108 @@ export default function App() {
 
     const isSourcesMode = state.appMode === "sources";
 
+    let currentChunk: number[] = [];
+
     try {
-      const BATCH_SIZE = 5;
+      const BATCH_SIZE = 40;
       for (let b = 0; b < indicesToRun.length; b += BATCH_SIZE) {
         if (signal.aborted) {
           throw new DOMException("Aborted", "AbortError");
         }
 
         const chunkIndices = indicesToRun.slice(b, b + BATCH_SIZE);
+        currentChunk = chunkIndices;
         const chunkRows = chunkIndices.map((idx) => state.rows[idx]);
         const chunkDomains = chunkRows.map((r) => r.domain);
 
         let finalNewsMap: Record<string, any> = {};
 
-        if (isSourcesMode) {
-          // --- 1. Feed / Source level mode with source_cache ---
-          const cachedSources = await getCachedSources(chunkDomains);
+        // --- Feed / Source level mode with source_cache ---
+        const cachedSources = await getCachedSources(chunkDomains);
+        if (signal.aborted) {
+          throw new DOMException("Aborted", "AbortError");
+        }
+
+        const hitRows: { index: number; data: any }[] = [];
+        const missIndices: number[] = [];
+        const missSources: string[] = [];
+
+        chunkRows.forEach((row) => {
+          const cleanSrc = row.domain.toLowerCase().trim();
+          if (cachedSources[cleanSrc]) {
+            hitRows.push({ index: row.index, data: cachedSources[cleanSrc] });
+          } else {
+            missIndices.push(row.index);
+            missSources.push(row.domain);
+          }
+        });
+
+        // Add hits to map
+        hitRows.forEach(({ index, data }) => {
+          finalNewsMap[state.rows[index].domain.toLowerCase().trim()] = {
+            country: data.country,
+            language: data.language,
+            newsCategory: normalizeCategory(data.category || data.newsCategory),
+            sourcetype: data.sourcetype,
+            newsStatus: "success" as const,
+            isCacheHit: true
+          };
+        });
+
+        // Evaluate misses with API
+        if (missSources.length > 0) {
+          if (signal.aborted) {
+            throw new DOMException("Aborted", "AbortError");
+          }
+          const res = await fetch("/api/classify-source", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sources: missSources, customApiKey: customGeminiApiKey }),
+            signal,
+          });
+
+          const isLimitResponse = res.status === 429;
+          let data: any = {};
+          try {
+            data = await res.json();
+          } catch (jsonErr) {}
+
           if (signal.aborted) {
             throw new DOMException("Aborted", "AbortError");
           }
 
-          const hitRows: { index: number; data: any }[] = [];
-          const missIndices: number[] = [];
-          const missSources: string[] = [];
+          const hasLimitMessage = 
+            data.error?.toLowerCase().includes("limit") || 
+            data.error?.toLowerCase().includes("quota") || 
+            data.error?.toLowerCase().includes("exhausted") || 
+            data.error?.toLowerCase().includes("429") ||
+            data.message?.toLowerCase().includes("limit") ||
+            data.message?.toLowerCase().includes("quota");
 
-          chunkRows.forEach((row) => {
-            const cleanSrc = row.domain.toLowerCase().trim();
-            if (cachedSources[cleanSrc]) {
-              hitRows.push({ index: row.index, data: cachedSources[cleanSrc] });
-            } else {
-              missIndices.push(row.index);
-              missSources.push(row.domain);
+          if (isLimitResponse || !res.ok || !data.success || hasLimitMessage) {
+            if (isLimitResponse || hasLimitMessage) {
+              const errMsg = data.error || data.message || "AI/Gemini quota limit reached or daily API limits exceeded.";
+              setApiLimitError(errMsg);
+              handleStopAllProcesses();
+              throw new Error(`API_LIMIT_REACHED: ${errMsg}`);
             }
-          });
+            throw new Error(data.error || "Direct source classification failed.");
+          }
 
-          // Add hits to map
-          hitRows.forEach(({ index, data }) => {
-            finalNewsMap[state.rows[index].domain.toLowerCase().trim()] = {
-              country: data.country,
-              language: data.language,
-              newsCategory: data.category || data.newsCategory,
-              newsStatus: "success" as const,
-              isCacheHit: true
+          const freshResults = data.results as any[];
+
+          // Cache freshly classified sources
+          await setCachedSources(freshResults);
+
+          freshResults.forEach((item) => {
+            finalNewsMap[String(item.source).toLowerCase().trim()] = {
+              country: item.country,
+              language: item.language,
+              newsCategory: normalizeCategory(item.category),
+              sourcetype: item.sourcetype,
+              newsStatus: "success" as const
             };
           });
-
-          // Evaluate misses with API
-          if (missSources.length > 0) {
-            if (signal.aborted) {
-              throw new DOMException("Aborted", "AbortError");
-            }
-            const res = await fetch("/api/classify-source", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ sources: missSources }),
-              signal,
-            });
-
-            const isLimitResponse = res.status === 429;
-            let data: any = {};
-            try {
-              data = await res.json();
-            } catch (jsonErr) {}
-
-            if (signal.aborted) {
-              throw new DOMException("Aborted", "AbortError");
-            }
-
-            const hasLimitMessage = 
-              data.error?.toLowerCase().includes("limit") || 
-              data.error?.toLowerCase().includes("quota") || 
-              data.error?.toLowerCase().includes("exhausted") || 
-              data.error?.toLowerCase().includes("429") ||
-              data.message?.toLowerCase().includes("limit") ||
-              data.message?.toLowerCase().includes("quota");
-
-            if (isLimitResponse || !res.ok || !data.success || hasLimitMessage) {
-              if (isLimitResponse || hasLimitMessage) {
-                const errMsg = data.error || data.message || "AI/Gemini quota limit reached or daily API limits exceeded.";
-                setApiLimitError(errMsg);
-                handleStopAllProcesses();
-                throw new Error(`API_LIMIT_REACHED: ${errMsg}`);
-              }
-              throw new Error(data.error || "Direct source classification failed.");
-            }
-
-            const freshResults = data.results as any[];
-
-            // Cache freshly classified sources
-            await setCachedSources(freshResults);
-
-            freshResults.forEach((item) => {
-              finalNewsMap[String(item.source).toLowerCase().trim()] = {
-                country: item.country,
-                language: item.language,
-                newsCategory: item.category,
-                newsStatus: "success" as const
-              };
-            });
-          }
-
-        } else {
-          // --- 2. Domain level feed discovery with news_feed_cache ---
-          const cachedFeeds = await getCachedNewsFeeds(chunkDomains);
-          if (signal.aborted) {
-            throw new DOMException("Aborted", "AbortError");
-          }
-
-          const hitRows: { index: number; data: any }[] = [];
-          const missIndices: number[] = [];
-          const missDomains: string[] = [];
-
-          chunkRows.forEach((row) => {
-            const cleanDom = row.domain.toLowerCase().trim();
-            if (cachedFeeds[cleanDom]) {
-              hitRows.push({ index: row.index, data: cachedFeeds[cleanDom] });
-            } else {
-              missIndices.push(row.index);
-              missDomains.push(row.domain);
-            }
-          });
-
-          // Add hits to final map
-          hitRows.forEach(({ index, data }) => {
-            finalNewsMap[state.rows[index].domain.toLowerCase().trim()] = {
-              country: data.country,
-              language: data.language,
-              rssUrl: data.rssUrl,
-              sitemapUrl: data.sitemapUrl,
-              newsCategory: data.newsCategory,
-              newsStatus: "success" as const,
-              isNewsPublisher: "Yes" as const,
-              isCacheHit: true
-            };
-          });
-
-          // Evaluate misses with API
-          if (missDomains.length > 0) {
-            if (signal.aborted) {
-              throw new DOMException("Aborted", "AbortError");
-            }
-            const res = await fetch("/api/validate-news-source", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ domains: missDomains }),
-              signal,
-            });
-
-            const isLimitResponse = res.status === 429;
-            let data: any = {};
-            try {
-              data = await res.json();
-            } catch (jsonErr) {}
-
-            if (signal.aborted) {
-              throw new DOMException("Aborted", "AbortError");
-            }
-
-            const hasLimitMessage = 
-              data.error?.toLowerCase().includes("limit") || 
-              data.error?.toLowerCase().includes("quota") || 
-              data.error?.toLowerCase().includes("exhausted") || 
-              data.error?.toLowerCase().includes("429") ||
-              data.message?.toLowerCase().includes("limit") ||
-              data.message?.toLowerCase().includes("quota");
-
-            if (isLimitResponse || !res.ok || !data.success || hasLimitMessage) {
-              if (isLimitResponse || hasLimitMessage) {
-                const errMsg = data.error || data.message || "AI/Gemini quota limit reached or daily API limits exceeded.";
-                setApiLimitError(errMsg);
-                handleStopAllProcesses();
-                throw new Error(`API_LIMIT_REACHED: ${errMsg}`);
-              }
-              throw new Error(data.error || "News feed discovery request failed.");
-            }
-
-            const freshResults = data.results as any[];
-
-            // Cache fresh news feeds
-            await setCachedNewsFeeds(freshResults);
-
-            freshResults.forEach((item) => {
-              finalNewsMap[String(item.domain).toLowerCase().trim()] = {
-                country: item.country,
-                language: item.language,
-                rssUrl: item.rssUrl,
-                sitemapUrl: item.sitemapUrl,
-                newsCategory: item.newsCategory,
-                newsStatus: "success" as const,
-                isNewsPublisher: "Yes" as const
-              };
-            });
-          }
         }
 
         if (signal.aborted) {
@@ -879,6 +1283,7 @@ export default function App() {
                 rssUrl: match.rssUrl || row.rssUrl,
                 sitemapUrl: match.sitemapUrl || row.sitemapUrl,
                 newsCategory: match.newsCategory,
+                sourcetype: match.sourcetype || row.sourcetype,
                 newsStatus: "success" as const,
                 // Mark as news publisher when news analysis succeeds
                 isNewsPublisher: match.isNewsPublisher || row.isNewsPublisher,
@@ -931,12 +1336,18 @@ export default function App() {
 
       const isLimit = err.message?.startsWith("API_LIMIT_REACHED");
       if (isLimit) {
+        const cleanMsg = err.message.replace("API_LIMIT_REACHED: ", "");
         setState((prev) => {
-          const updatedRows = prev.rows.map((r) =>
-            indicesToRun.includes(r.index) && r.newsStatus === "processing"
-              ? { ...r, newsStatus: "pending" as const }
-              : r
-          );
+          const updatedRows = prev.rows.map((r) => {
+            if (!indicesToRun.includes(r.index)) return r;
+            if (currentChunk.includes(r.index)) {
+              return { ...r, newsStatus: "error" as const, newsErrorMsg: cleanMsg };
+            }
+            if (r.newsStatus === "processing") {
+              return { ...r, newsStatus: "pending" as const };
+            }
+            return r;
+          });
           return { ...prev, rows: updatedRows };
         });
         setIsAnalyzingNews(false);
@@ -945,11 +1356,20 @@ export default function App() {
 
       console.error(err);
       setState((prev) => {
-        const updatedRows = prev.rows.map((r) =>
-          indicesToRun.includes(r.index) && r.newsStatus === "processing"
-            ? { ...r, newsStatus: "error" as const, newsErrorMsg: err.message || "Feed cached discovery failed" }
-            : r
-        );
+        const updatedRows = prev.rows.map((r) => {
+          if (!indicesToRun.includes(r.index)) return r;
+          if (currentChunk.includes(r.index)) {
+            return {
+              ...r,
+              newsStatus: "error" as const,
+              newsErrorMsg: err.message || "Feed cached discovery failed"
+            };
+          }
+          if (r.newsStatus === "processing") {
+            return { ...r, newsStatus: "pending" as const };
+          }
+          return r;
+        });
         return { ...prev, rows: updatedRows };
       });
       setIsAnalyzingNews(false);
@@ -963,8 +1383,41 @@ export default function App() {
   // Run validation for news-source attributes
   const handleSetAppMode = (mode: "domains" | "sources") => {
     setState((prev) => {
-      const updatedRows = prev.rows.map((row) => {
-        const rawValue = String(row.originalValues[prev.domainColumnIndex] || "").trim();
+      const currentMode = prev.appMode;
+      const savedConfig = prev.config;
+      const savedHeaders = prev.headers;
+      const savedDomainCol = prev.domainColumnIndex;
+      const savedRows = prev.rows;
+
+      let nextDomainsConfig = prev.domainsConfig || { url: DEFAULT_SHEET_URL, spreadsheetId: "", gid: "", sheetName: "" };
+      let nextDomainsHeaders = prev.domainsHeaders || [];
+      let nextDomainsDomainColumnIndex = prev.domainsDomainColumnIndex || 0;
+      let nextDomainsRows = prev.domainsRows || [];
+
+      let nextSourcesConfig = prev.sourcesConfig || { url: DEFAULT_SHEET_URL, spreadsheetId: "", gid: "", sheetName: "" };
+      let nextSourcesHeaders = prev.sourcesHeaders || [];
+      let nextSourcesDomainColumnIndex = prev.sourcesDomainColumnIndex || 0;
+      let nextSourcesRows = prev.sourcesRows || [];
+
+      if (currentMode === "domains") {
+        nextDomainsConfig = savedConfig;
+        nextDomainsHeaders = savedHeaders;
+        nextDomainsDomainColumnIndex = savedDomainCol;
+        nextDomainsRows = savedRows;
+      } else {
+        nextSourcesConfig = savedConfig;
+        nextSourcesHeaders = savedHeaders;
+        nextSourcesDomainColumnIndex = savedDomainCol;
+        nextSourcesRows = savedRows;
+      }
+
+      let newConfig = mode === "domains" ? nextDomainsConfig : nextSourcesConfig;
+      let newHeaders = mode === "domains" ? nextDomainsHeaders : nextSourcesHeaders;
+      let newDomainCol = mode === "domains" ? nextDomainsDomainColumnIndex : nextSourcesDomainColumnIndex;
+      let newRows = mode === "domains" ? nextDomainsRows : nextSourcesRows;
+
+      const updatedRows = newRows.map((row) => {
+        const rawValue = String(row.originalValues[newDomainCol] || "").trim();
         let cleanDomain = rawValue;
         if (mode === "domains") {
           cleanDomain = rawValue
@@ -984,7 +1437,18 @@ export default function App() {
       return {
         ...prev,
         appMode: mode,
+        config: newConfig,
+        headers: newHeaders,
+        domainColumnIndex: newDomainCol,
         rows: updatedRows,
+        domainsConfig: nextDomainsConfig,
+        domainsHeaders: nextDomainsHeaders,
+        domainsDomainColumnIndex: nextDomainsDomainColumnIndex,
+        domainsRows: currentMode === "domains" ? updatedRows : nextDomainsRows,
+        sourcesConfig: nextSourcesConfig,
+        sourcesHeaders: nextSourcesHeaders,
+        sourcesDomainColumnIndex: nextSourcesDomainColumnIndex,
+        sourcesRows: currentMode === "sources" ? updatedRows : nextSourcesRows,
         filterCategory: "",
         filterNews: "",
         searchTerm: "",
@@ -994,6 +1458,17 @@ export default function App() {
 
   const handleValidateNewsSelected = (indices: number[]) => {
     validateNewsSourcesBatch(indices);
+  };
+
+  const handleCheckNewsPublisherSelected = (indices: number[]) => {
+    checkNewsPublisherBatch(indices);
+  };
+
+  const handleCheckNewsPublisherRemaining = () => {
+    const pendings = state.rows.filter((r) => r.newsPublisherStatus !== "success").map((r) => r.index);
+    if (pendings.length > 0) {
+      checkNewsPublisherBatch(pendings);
+    }
   };
 
   // Fire a classification run for manually marked checkboxes
@@ -1021,18 +1496,27 @@ export default function App() {
       newsAbortControllerRef.current = null;
       abortedAny = true;
     }
+    if (trancoAbortControllerRef.current) {
+      trancoAbortControllerRef.current.abort();
+      trancoAbortControllerRef.current = null;
+      abortedAny = true;
+    }
 
     // Force reset any active spinners and return "processing" rows to "pending"
     setIsAnalyzingNews(false);
+    setIsFetchingTranco(false);
     setState((prev) => {
       const sanitizedRows = prev.rows.map((r) => ({
         ...r,
         status: r.status === "processing" ? "pending" : r.status,
         newsStatus: r.newsStatus === "processing" ? "pending" : r.newsStatus,
+        trancoStatus: r.trancoStatus === "processing" ? undefined : r.trancoStatus,
+        newsPublisherStatus: r.newsPublisherStatus === "processing" ? "pending" : r.newsPublisherStatus,
       }));
       return {
         ...prev,
         isClassifying: false,
+        isCheckingNewsPublisher: false,
         rows: sanitizedRows,
       };
     });
@@ -1064,6 +1548,24 @@ export default function App() {
       headers: [],
       domainColumnIndex: 0,
       rows: [],
+      domainsConfig: {
+        url: DEFAULT_SHEET_URL,
+        spreadsheetId: "",
+        gid: "",
+        sheetName: "",
+      },
+      domainsHeaders: [],
+      domainsDomainColumnIndex: 0,
+      domainsRows: [],
+      sourcesConfig: {
+        url: DEFAULT_SHEET_URL,
+        spreadsheetId: "",
+        gid: "",
+        sheetName: "",
+      },
+      sourcesHeaders: [],
+      sourcesDomainColumnIndex: 0,
+      sourcesRows: [],
       activeTab: "database",
       filterCategory: "",
       filterNews: "",
@@ -1079,25 +1581,66 @@ export default function App() {
     localStorage.removeItem("publisher_cache_sources");
     localStorage.removeItem("publisher_cache_newsfeeds");
 
+    const clearRowData = (row: any) => ({
+      ...row,
+      category: undefined,
+      isNewsPublisher: undefined,
+      reasoning: undefined,
+      status: "pending" as const,
+      errorMsg: undefined,
+      country: undefined,
+      language: undefined,
+      rssUrl: undefined,
+      sitemapUrl: undefined,
+      newsCategory: undefined,
+      newsStatus: "pending" as const,
+      newsErrorMsg: undefined,
+      sourcetype: undefined,
+    });
+
     setState((prev) => ({
       ...prev,
-      rows: prev.rows.map((row) => ({
+      rows: prev.rows.map(clearRowData),
+      domainsRows: (prev.domainsRows || []).map(clearRowData),
+      sourcesRows: (prev.sourcesRows || []).map(clearRowData),
+    }));
+    addToast("Wiped all cached classifications of the current dataset!", "info");
+  };
+
+  const handleWipeDatabaseCache = async () => {
+    try {
+      await wipeGlobalDatabaseCache();
+      const clearRowData = (row: any) => ({
         ...row,
         category: undefined,
         isNewsPublisher: undefined,
         reasoning: undefined,
-        status: "pending",
+        siteName: undefined,
+        displayName: undefined,
+        description: undefined,
+        status: "pending" as const,
         errorMsg: undefined,
         country: undefined,
         language: undefined,
         rssUrl: undefined,
         sitemapUrl: undefined,
         newsCategory: undefined,
-        newsStatus: "pending",
+        newsStatus: "pending" as const,
         newsErrorMsg: undefined,
-      })),
-    }));
-    addToast("Wiped all cached classifications of the current dataset!", "info");
+        sourcetype: undefined,
+      });
+
+      setState((prev) => ({
+        ...prev,
+        rows: prev.rows.map(clearRowData),
+        domainsRows: (prev.domainsRows || []).map(clearRowData),
+        sourcesRows: (prev.sourcesRows || []).map(clearRowData),
+      }));
+      addToast("Cleaned cloud database successfully! Cache has been completely wiped.", "success");
+    } catch (err: any) {
+      console.error(err);
+      addToast(`Oops! Failed to clean cloud cache database: ${err.message || err}`, "error");
+    }
   };
 
   // Connect Google using direct Firebase login with spreadsheets scope, fallback to GSI Token client
@@ -1232,6 +1775,9 @@ export default function App() {
       addLog(`Metadata API response code: ${sheetMetaDataRes.status} (${sheetMetaDataRes.statusText})`);
 
       if (!sheetMetaDataRes.ok) {
+        if (sheetMetaDataRes.status === 401) {
+          handleDisconnectGoogle();
+        }
         const errBody = await sheetMetaDataRes.text();
         addLog(`Metadata API failed with body: "${errBody}"`);
         throw new Error(
@@ -1266,6 +1812,9 @@ export default function App() {
       addLog(`Column headers read API response code: ${readHeadersRes.status}`);
 
       if (!readHeadersRes.ok) {
+        if (readHeadersRes.status === 401) {
+          handleDisconnectGoogle();
+        }
         const headerErrBody = await readHeadersRes.text();
         addLog(`Headers API failure: "${headerErrBody}"`);
         throw new Error(`Could not read current spreadsheet header values. Tab lookup or Sheet permissions might be restricted.`);
@@ -1276,16 +1825,24 @@ export default function App() {
       addLog(`Spreadsheet headers read successfully. Found ${currentHeaders.length} existing columns: "${currentHeaders.join('", "')}"`);
 
       // Find indices for target columns if they exist
+      let siteNameIdx = currentHeaders.findIndex((h) => h.toLowerCase() === "site name" || h.toLowerCase() === "sitename");
+      let displayNameIdx = currentHeaders.findIndex((h) => h.toLowerCase() === "display name" || h.toLowerCase() === "displayname");
       let catIdx = currentHeaders.findIndex((h) => h.toLowerCase() === "category" || h.toLowerCase() === "news category" || h.toLowerCase() === "sub-category");
       let newsIdx = currentHeaders.findIndex((h) => h.toLowerCase() === "news publisher");
-      let reasonIdx = currentHeaders.findIndex((h) => h.toLowerCase() === "reasoning" || h.toLowerCase() === "ai description / reasoning" || h.toLowerCase() === "ai domain description");
+      let domainDescIdx = currentHeaders.findIndex((h) => h.toLowerCase() === "domain description" || h.toLowerCase() === "description" || h.toLowerCase() === "ai domain description" || h.toLowerCase() === "ai description / reasoning");
+      let trancoIdx = currentHeaders.findIndex((h) => h.toLowerCase() === "tranco rank" || h.toLowerCase() === "tranco traffic rank" || h.toLowerCase() === "priority");
+      let reasonIdx = currentHeaders.findIndex((h) => h.toLowerCase() === "reasoning" || h.toLowerCase() === "ai reasoning" || h.toLowerCase() === "analysis reasoning");
       let countryIdx = currentHeaders.findIndex((h) => h.toLowerCase() === "country");
       let langIdx = currentHeaders.findIndex((h) => h.toLowerCase() === "language" || h.toLowerCase() === "lang");
 
       addLog(`Detected Target Columns indices (0-indexed):`);
-      addLog(` - Category / Sub-Category Column Index: ${catIdx !== -1 ? catIdx : "NOT FOUND (Will append)"}`);
+      addLog(` - Site Name Index: ${siteNameIdx !== -1 ? siteNameIdx : "NOT FOUND (Will append)"}`);
+      addLog(` - Display Name Index: ${displayNameIdx !== -1 ? displayNameIdx : "NOT FOUND (Will append)"}`);
+      addLog(` - Category Column Index: ${catIdx !== -1 ? catIdx : "NOT FOUND (Will append)"}`);
       addLog(` - News Publisher Column Index: ${newsIdx !== -1 ? newsIdx : "NOT FOUND (Will append)"}`);
-      addLog(` - AI Description / Reasoning Column Index: ${reasonIdx !== -1 ? reasonIdx : "NOT FOUND (Will append)"}`);
+      addLog(` - Domain Description Column Index: ${domainDescIdx !== -1 ? domainDescIdx : "NOT FOUND (Will append)"}`);
+      addLog(` - Tranco Traffic Rank Column Index: ${trancoIdx !== -1 ? trancoIdx : "NOT FOUND (Will append)"}`);
+      addLog(` - AI Reasoning Column Index: ${reasonIdx !== -1 ? reasonIdx : "NOT FOUND (Will append)"}`);
       addLog(` - Country Column Index: ${countryIdx !== -1 ? countryIdx : "NOT FOUND (Will append)"}`);
       addLog(` - Language Column Index: ${langIdx !== -1 ? langIdx : "NOT FOUND (Will append)"}`);
 
@@ -1295,14 +1852,52 @@ export default function App() {
 
       let writeRange = "";
 
-      if (catIdx !== -1 || newsIdx !== -1 || reasonIdx !== -1 || countryIdx !== -1 || langIdx !== -1) {
+      if (state.appMode === "sources") {
+        addLog("Sources Mode detected: Writing exactly [source_url, language, country, category, sourcetype] columns back to the sheet.");
+        const columnsToExport = ["source_url", "language", "country", "category", "sourcetype"];
+        const endLetter = getColumnLetter(columnsToExport.length);
+        writeRange = `${escapedSheetName}!A1:${endLetter}${maxRows}`;
+        addLog(`Calculated target sources range span: "${writeRange}" (Columns A through ${endLetter})`);
+
+        // Populate header
+        dataMatrix[0] = columnsToExport;
+
+        // Populate rows
+        let countExported = 0;
+        for (let r = 0; r < state.rows.length; r++) {
+          const rowObj = state.rows[r];
+          dataMatrix[r + 1] = [
+            rowObj.domain,
+            rowObj.language || "",
+            rowObj.country || "",
+            rowObj.newsCategory || "",
+            rowObj.sourcetype || ""
+          ];
+          countExported++;
+        }
+        addLog(`Prepared source classification matrix for ${countExported} records.`);
+      } else if (
+        siteNameIdx !== -1 ||
+        displayNameIdx !== -1 ||
+        catIdx !== -1 ||
+        newsIdx !== -1 ||
+        domainDescIdx !== -1 ||
+        trancoIdx !== -1 ||
+        reasonIdx !== -1 ||
+        countryIdx !== -1 ||
+        langIdx !== -1
+      ) {
         addLog("CASE detected: At least one target column already exists. Writing directly to specific pre-defined columns standard offset rules.");
         const writeCols = [
-          { name: "Category", curIdx: catIdx, fallbackOffset: 0, valFn: (r: DomainRow) => r.newsCategory || r.category || "" },
-          { name: "News Publisher", curIdx: newsIdx, fallbackOffset: 1, valFn: (r: DomainRow) => r.isNewsPublisher || "" },
-          { name: "AI Domain Description", curIdx: reasonIdx, fallbackOffset: 2, valFn: (r: DomainRow) => r.reasoning || "" },
-          { name: "Country", curIdx: countryIdx, fallbackOffset: 3, valFn: (r: DomainRow) => r.country || "" },
-          { name: "Language", curIdx: langIdx, fallbackOffset: 4, valFn: (r: DomainRow) => r.language || "" },
+          { name: "Site Name", curIdx: siteNameIdx, fallbackOffset: 0, valFn: (r: DomainRow) => r.siteName || "" },
+          { name: "Display Name", curIdx: displayNameIdx, fallbackOffset: 1, valFn: (r: DomainRow) => r.displayName || "" },
+          { name: "Category", curIdx: catIdx, fallbackOffset: 2, valFn: (r: DomainRow) => r.newsCategory || r.category || "" },
+          { name: "News Publisher", curIdx: newsIdx, fallbackOffset: 3, valFn: (r: DomainRow) => r.isNewsPublisher || "" },
+          { name: "Domain Description", curIdx: domainDescIdx, fallbackOffset: 4, valFn: (r: DomainRow) => r.description || "" },
+          { name: "Tranco Traffic Rank", curIdx: trancoIdx, fallbackOffset: 5, valFn: (r: DomainRow) => r.trancoRank !== undefined && r.trancoRank !== null ? r.trancoRank.toString() : "-" },
+          { name: "AI Reasoning", curIdx: reasonIdx, fallbackOffset: 6, valFn: (r: DomainRow) => r.reasoning || "" },
+          { name: "Country", curIdx: countryIdx, fallbackOffset: 7, valFn: (r: DomainRow) => r.country || "" },
+          { name: "Language", curIdx: langIdx, fallbackOffset: 8, valFn: (r: DomainRow) => r.language || "" },
         ];
 
         const mappedCols = writeCols.map((col) => {
@@ -1334,11 +1929,15 @@ export default function App() {
         }
         addLog(`Prepared write matrix cells for ${countWritten} records.`);
       } else {
-        addLog("CASE detected: None of the target columns exist. Appending 5 brand-new columns to the end of your original sheet...");
+        addLog("CASE detected: None of the target columns exist. Appending 9 brand-new columns to the end of your original sheet...");
         const columnsToAppend = [
+          "Site Name",
+          "Display Name",
           "Category", 
           "News Publisher", 
-          "AI Domain Description",
+          "Domain Description",
+          "Tranco Traffic Rank",
+          "AI Reasoning",
           "Country",
           "Language"
         ];
@@ -1355,15 +1954,19 @@ export default function App() {
         for (let r = 0; r < state.rows.length; r++) {
           const rowObj = state.rows[r];
           dataMatrix[r + 1] = [
+            rowObj.siteName || "",
+            rowObj.displayName || "",
             rowObj.newsCategory || rowObj.category || "", 
             rowObj.isNewsPublisher || "", 
+            rowObj.description || "",
+            rowObj.trancoRank !== undefined && rowObj.trancoRank !== null ? rowObj.trancoRank.toString() : "-",
             rowObj.reasoning || "",
             rowObj.country || "",
             rowObj.language || ""
           ];
           countAppended++;
         }
-        addLog(`Prepared append matrix for ${countAppended} records under 5 new headers.`);
+        addLog(`Prepared append matrix for ${countAppended} records under 9 new headers.`);
       }
 
       // Execute PUT back to Google Sheets range
@@ -1390,6 +1993,9 @@ export default function App() {
       addLog(`Google Sheet Values Write response status: ${updateRes.status} (${updateRes.statusText})`);
 
       if (!updateRes.ok) {
+        if (updateRes.status === 401) {
+          handleDisconnectGoogle();
+        }
         const errText = await updateRes.text();
         addLog(`Write request failed! Response body: "${errText}"`);
         throw new Error(`Write API Error (HTTP ${updateRes.status}): ${errText}`);
@@ -1419,41 +2025,70 @@ export default function App() {
   // Client-side CSV download fallback
   const handleDownloadCSV = () => {
     let csvContent = "";
-    // Header
-    const modifiedHeaders = [
-      ...state.headers, 
-      "Category", 
-      "News Publisher", 
-      "AI Domain Description",
-      "Country",
-      "Language"
-    ];
-    csvContent += modifiedHeaders.map((h) => `"${h.replace(/"/g, '""')}"`).join(",") + "\n";
-
-    // Rows
-    for (const row of state.rows) {
-      const originalParts = row.originalValues.map((v) => `"${v.replace(/"/g, '""')}"`);
-      const resultsParts = [
-        `"${(row.newsCategory || row.category || "").replace(/"/g, '""')}"`,
-        `"${(row.isNewsPublisher || "").replace(/"/g, '""')}"`,
-        `"${(row.reasoning || "").replace(/"/g, '""')}"`,
-        `"${(row.country || "").replace(/"/g, '""')}"`,
-        `"${(row.language || "").replace(/"/g, '""')}"`,
+    if (state.appMode === "sources") {
+      const headersToDownload = ["source_url", "language", "country", "category", "sourcetype"];
+      csvContent += headersToDownload.map((h) => `"${h.replace(/"/g, '""')}"`).join(",") + "\n";
+      for (const row of state.rows) {
+        const rowParts = [
+          `"${(row.domain || "").replace(/"/g, '""')}"`,
+          `"${(row.language || "").replace(/"/g, '""')}"`,
+          `"${(row.country || "").replace(/"/g, '""')}"`,
+          `"${(row.newsCategory || "").replace(/"/g, '""')}"`,
+          `"${(row.sourcetype || "").replace(/"/g, '""')}"`,
+        ];
+        csvContent += rowParts.join(",") + "\n";
+      }
+    } else {
+      // Header
+      const modifiedHeaders = [
+        ...state.headers, 
+        "Site Name",
+        "Display Name",
+        "Category", 
+        "News Publisher", 
+        "Domain Description",
+        "Tranco Traffic Rank",
+        "AI Reasoning",
+        "Country",
+        "Language",
+        "RSS URL",
+        "Sitemap URL"
       ];
-      csvContent += [...originalParts, ...resultsParts].join(",") + "\n";
+      csvContent += modifiedHeaders.map((h) => `"${h.replace(/"/g, '""')}"`).join(",") + "\n";
+
+      // Rows
+      for (const row of state.rows) {
+        const originalParts = row.originalValues.map((v) => `"${v.replace(/"/g, '""')}"`);
+        const resultsParts = [
+          `"${(row.siteName || "").replace(/"/g, '""')}"`,
+          `"${(row.displayName || "").replace(/"/g, '""')}"`,
+          `"${(row.newsCategory || row.category || "").replace(/"/g, '""')}"`,
+          `"${(row.isNewsPublisher || "").replace(/"/g, '""')}"`,
+          `"${(row.description || "").replace(/"/g, '""')}"`,
+          `"${(row.trancoRank !== undefined && row.trancoRank !== null ? row.trancoRank.toString() : "-").replace(/"/g, '""')}"`,
+          `"${(row.reasoning || "").replace(/"/g, '""')}"`,
+          `"${(row.country || "").replace(/"/g, '""')}"`,
+          `"${(row.language || "").replace(/"/g, '""')}"`,
+          `"${(row.rssUrl || "").replace(/"/g, '""')}"`,
+          `"${(row.sitemapUrl || "").replace(/"/g, '""')}"`,
+        ];
+        csvContent += [...originalParts, ...resultsParts].join(",") + "\n";
+      }
     }
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `classified_domains_${state.config.spreadsheetId.slice(0, 6)}.csv`);
+    link.setAttribute("download", `classified_domains_${state.config.spreadsheetId ? state.config.spreadsheetId.slice(0, 6) : "export"}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  const classifiedCount = state.rows.filter((r) => r.status === "success").length;
+  const classifiedCount = state.appMode === "sources"
+    ? state.rows.filter((r) => r.newsStatus === "success").length
+    : state.rows.filter((r) => r.status === "success").length;
   const totalCount = state.rows.length;
 
   if (!authInitialized) {
@@ -1532,6 +2167,8 @@ export default function App() {
         firebaseUser={firebaseUser}
         onSignOutFirebase={handleSignOutFirebase}
         onResetSession={handleResetSession}
+        customGeminiApiKey={customGeminiApiKey}
+        setCustomGeminiApiKey={setCustomGeminiApiKey}
       />
 
       {/* Main Display Area */}
@@ -1699,7 +2336,7 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-2">
-              {state.isClassifying || isAnalyzingNews ? (
+              {state.isClassifying || isAnalyzingNews || state.isCheckingNewsPublisher || isFetchingTranco ? (
                 <button
                   type="button"
                   onClick={handleStopAllProcesses}
@@ -1768,6 +2405,9 @@ export default function App() {
             isClassifying={state.isClassifying}
             onClassifySelected={handleClassifySelected}
             onClassifyRemaining={handleClassifyRemaining}
+            isCheckingNewsPublisher={state.isCheckingNewsPublisher}
+            onCheckNewsPublisherSelected={handleCheckNewsPublisherSelected}
+            onCheckNewsPublisherRemaining={handleCheckNewsPublisherRemaining}
             filterCategory={state.filterCategory}
             setFilterCategory={(val) => setState((prev) => ({ ...prev, filterCategory: val }))}
             filterNews={state.filterNews}
@@ -1779,6 +2419,9 @@ export default function App() {
             appMode={state.appMode}
             onStopAllProcesses={handleStopAllProcesses}
             onClearCurrentResults={handleClearCurrentResults}
+            onWipeDatabaseCache={handleWipeDatabaseCache}
+            isFetchingTranco={isFetchingTranco}
+            onFetchTrancoRanks={handleFetchTrancoRanks}
           />
         )}
 

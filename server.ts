@@ -12,61 +12,136 @@ const PORT = 3000;
 // Parse typical JSON bodies up to 10mb
 app.use(express.json({ limit: "10mb" }));
 
-// Endpoint to fetch public Google Sheet as CSV with multi-stage authorization bypasses
+function convertToCSV(values: any[][]): string {
+  if (!values || !Array.isArray(values)) return "";
+  return values
+    .map((row) =>
+      row
+        .map((val) => {
+          const cellStr = val === null || val === undefined ? "" : String(val);
+          if (cellStr.includes(",") || cellStr.includes('"') || cellStr.includes("\n") || cellStr.includes("\r")) {
+            return `"${cellStr.replace(/"/g, '""')}"`;
+          }
+          return cellStr;
+        })
+        .join(",")
+    )
+    .join("\n");
+}
+
+// Endpoint to fetch public/private Google Sheet as CSV with multi-stage authorization bypasses
 app.get("/api/fetch-sheet", async (req, res) => {
   try {
     const { spreadsheetId, gid } = req.query;
     if (!spreadsheetId) {
       return res.status(400).json({ error: "spreadsheetId parameter is required." });
     }
-    const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv${gid ? `&gid=${gid}` : ""}`;
-    
-    const headers: Record<string, string> = {
-      "User-Agent": "aistudio-build",
-    };
-    if (req.headers.authorization && req.headers.authorization !== "Bearer null" && req.headers.authorization !== "Bearer undefined") {
-      headers["Authorization"] = req.headers.authorization;
-    }
 
-    let response = await fetch(url, { headers });
+    const authHeader = req.headers.authorization;
+    let csvText: string | null = null;
+    let isAuthorized = false;
 
-    // Fallback 1: If the request was authorized but failed, retry anonymously! 
-    // This allows loading papers/sheets that are "Anyone with the link can view" even if the credentials sent are invalid or expired.
-    if (!response.ok && headers["Authorization"]) {
-      console.log(`Private/Authorized fetch returned HTTP ${response.status}. Retrying as public anonymous request...`);
-      const anonResponse = await fetch(url, {
-        headers: { "User-Agent": "aistudio-build" },
-      });
-      if (anonResponse.ok) {
-        response = anonResponse;
+    // Direct REST API Handshake first (for private spreadsheets using bearer tokens)
+    if (authHeader && authHeader !== "Bearer null" && authHeader !== "Bearer undefined") {
+      isAuthorized = true;
+      try {
+        console.log(`Attempting secure REST API fetch for spreadsheet ${spreadsheetId}...`);
+        const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
+          headers: { Authorization: authHeader, "User-Agent": "aistudio-build" },
+        });
+
+        if (metaRes.ok) {
+          const metaData = await metaRes.json();
+          const sheets = metaData.sheets || [];
+          let targetSheetTitle = sheets[0]?.properties?.title || "Sheet1";
+          if (gid) {
+            const matchedSheet = sheets.find((s: any) => String(s.properties?.sheetId) === String(gid));
+            if (matchedSheet) {
+              targetSheetTitle = matchedSheet.properties.title;
+            }
+          }
+
+          console.log(`Retrieving secure range values for tab: "${targetSheetTitle}"...`);
+          const valuesRes = await fetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(targetSheetTitle)}`,
+            { headers: { Authorization: authHeader, "User-Agent": "aistudio-build" } }
+          );
+
+          if (valuesRes.ok) {
+            const valuesData = await valuesRes.json();
+            csvText = convertToCSV(valuesData.values || []);
+            console.log("Secure Sheets API fetch succeeded.");
+          } else {
+            console.warn(`Values REST API fetch failed with status: ${valuesRes.status}`);
+            if (valuesRes.status === 401) {
+              return res.status(401).json({
+                error: "Your Google Access Token is missing, expired, or invalid. Please click 'Connect Google Docs' or paste a valid Token.",
+              });
+            }
+          }
+        } else {
+          console.warn(`Spreadsheet metadata REST API fetch failed with status: ${metaRes.status}`);
+          if (metaRes.status === 401) {
+            return res.status(401).json({
+              error: "Your Google Access Token is missing, expired, or invalid. Please click 'Connect Google Docs' or paste a valid Token.",
+            });
+          }
+        }
+      } catch (authFetchErr) {
+        console.error("Exception during secure REST API handshake:", authFetchErr);
       }
     }
 
-    // Fallback 2: If still unsuccessful, attempt the Google GViz Visualization query endpoint (superior bypass for public sheets)
-    if (!response.ok) {
-      const gvizUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv${gid ? `&gid=${gid}` : ""}`;
-      console.log(`Standard fetch failed with HTTP ${response.status}. Trying gviz fallback URL: ${gvizUrl}`);
-      const gvizResponse = await fetch(gvizUrl, {
-        headers: { "User-Agent": "aistudio-build" },
-      });
-      if (gvizResponse.ok) {
-        response = gvizResponse;
+    // If secure REST API fetch didn't return values, proceed to web export fallbacks
+    if (csvText === null) {
+      const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv${gid ? `&gid=${gid}` : ""}`;
+      const headers: Record<string, string> = {
+        "User-Agent": "aistudio-build",
+      };
+      if (authHeader && authHeader !== "Bearer null" && authHeader !== "Bearer undefined") {
+        headers["Authorization"] = authHeader;
       }
+
+      let response = await fetch(url, { headers });
+
+      // Fallback 1: If authorized fetch returned 401/error, retry anonymously!
+      if (!response.ok && headers["Authorization"]) {
+        console.log(`Private/Authorized fetch returned HTTP ${response.status}. Retrying as public anonymous request...`);
+        const anonResponse = await fetch(url, {
+          headers: { "User-Agent": "aistudio-build" },
+        });
+        if (anonResponse.ok) {
+          response = anonResponse;
+        }
+      }
+
+      // Fallback 2: Try the Google GViz Visualization query endpoint
+      if (!response.ok) {
+        const gvizUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv${gid ? `&gid=${gid}` : ""}`;
+        console.log(`Standard fetch failed with HTTP ${response.status}. Trying gviz fallback URL: ${gvizUrl}`);
+        const gvizResponse = await fetch(gvizUrl, {
+          headers: { "User-Agent": "aistudio-build" },
+        });
+        if (gvizResponse.ok) {
+          response = gvizResponse;
+        }
+      }
+
+      if (!response.ok) {
+        const errorStatus = response.status;
+        return res.status(errorStatus === 401 ? 401 : 400).json({
+          error: `Failed to fetch sheet (HTTP ${errorStatus}). ${
+            errorStatus === 401
+              ? "Your Google Access Token is missing, expired, or invalid. Please click 'Connect Google Docs' or paste a valid Token."
+              : errorStatus === 403
+                ? "Access denied. Make sure you have authorized permissions/access to this spreadsheet."
+                : "Make sure the Google Sheet is shared with 'Anyone with the link can view' permission, or authenticate to access it."
+          }`,
+        });
+      }
+      csvText = await response.text();
     }
 
-    if (!response.ok) {
-      const errorStatus = response.status;
-      return res.status(errorStatus === 401 ? 401 : 400).json({
-        error: `Failed to fetch sheet (HTTP ${errorStatus}). ${
-          errorStatus === 401 
-            ? "Your Google Access Token is missing, expired, or invalid. Please click 'Connect Google Docs' or paste a valid Token."
-            : errorStatus === 403
-              ? "Access denied. Make sure you have authorized permissions/access to this spreadsheet."
-              : "Make sure the Google Sheet is shared with 'Anyone with the link can view' permission, or authenticate to access it."
-        }`,
-      });
-    }
-    const csvText = await response.text();
     return res.json({ success: true, csv: csvText });
   } catch (error: any) {
     console.error("Fetch-sheet error:", error);
@@ -76,7 +151,17 @@ app.get("/api/fetch-sheet", async (req, res) => {
 
 // Initialize the server-side Gemini client
 let ai: GoogleGenAI | null = null;
-function getGemini(): GoogleGenAI {
+function getGemini(customKey?: string): GoogleGenAI {
+  if (customKey && customKey.trim()) {
+    return new GoogleGenAI({
+      apiKey: customKey.trim(),
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+      },
+    });
+  }
   if (!ai) {
     const key = process.env.GEMINI_API_KEY;
     if (!key) {
@@ -124,20 +209,23 @@ async function generateContentWithRetry(gemini: GoogleGenAI, params: any, retrie
                                 msg.includes("limit: 20") ||
                                 msg.includes("exceeded your current quota");
 
-        if (isQuotaExceeded) {
-          console.warn(`Quota or Rate limit exceeded on ${model}. Swapping to the next fallback model immediately...`);
+        const isOverloaded = code === 503 || 
+                             msg.includes("503") || 
+                             msg.includes("unavailable") || 
+                             msg.includes("high demand") || 
+                             msg.includes("spikes in demand") || 
+                             msg.includes("overloaded") ||
+                             msg.includes("temporary");
+
+        const currentModelIndex = modelsToTry.indexOf(model);
+        const hasFallbackModel = currentModelIndex !== -1 && currentModelIndex < modelsToTry.length - 1;
+
+        if ((isQuotaExceeded || isOverloaded) && hasFallbackModel) {
+          console.warn(`Model ${model} is overloaded, busy or quota exceeded. Swapping immediately to next fallback model...`);
           break; // Break inner loop of this model to try the next model instantly
         }
 
-        const isTransient = code === 503 || 
-                            msg.includes("503") || 
-                            msg.includes("unavailable") || 
-                            msg.includes("high demand") || 
-                            msg.includes("spikes in demand") ||
-                            msg.includes("overloaded") ||
-                            msg.includes("temporary");
-
-        if (isTransient && attempt < retries - 1) {
+        if (isOverloaded && attempt < retries - 1) {
           const delay = baseDelayMs * Math.pow(2, attempt);
           console.warn(`Transient busy error on ${model} (attempt ${attempt + 1}/${retries}): ${err.message}. Retrying in ${delay}ms...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
@@ -150,6 +238,55 @@ async function generateContentWithRetry(gemini: GoogleGenAI, params: any, retrie
   }
 
   throw lastError;
+}
+
+// Helper to sanitize and clarify Gemini API errors for users
+function sanitizeGeminiError(err: any): string {
+  if (!err) return "An unexpected error occurred.";
+  
+  const originalMessage = String(err.message || "");
+  let messageLower = originalMessage.toLowerCase();
+  
+  // Try to parse if it is a JSON string from API (like ApiError format with text prefix)
+  try {
+    const jsonStartIndex = originalMessage.indexOf("{");
+    if (jsonStartIndex !== -1) {
+      const jsonSubstring = originalMessage.slice(jsonStartIndex);
+      const parsed = JSON.parse(jsonSubstring);
+      if (parsed.error && parsed.error.message) {
+        let nestedMsg = parsed.error.message;
+        if (parsed.error.code === 429 || String(parsed.error.status).toLowerCase() === "resource_exhausted") {
+          return `AI Daily Free-Tier Quota Limit Exceeded: ${nestedMsg}. Please add a custom development key or select a paid API tier under Settings > Secrets to continue without constraints.`;
+        }
+        return nestedMsg;
+      }
+    }
+  } catch (e) {
+    // Treat as non-json if failing to parse
+  }
+
+  // Fallback checks on plain text message
+  if (messageLower.includes("quota") || messageLower.includes("resource_exhausted") || messageLower.includes("limit: 20") || messageLower.includes("429")) {
+    return "AI API Request Limit Exceeded: You have reached the maximum allowed daily classifications for this model. Add a custom Gemini key under Settings > Secrets to run unlimited processes.";
+  }
+  if (messageLower.includes("503") || messageLower.includes("unavailable") || messageLower.includes("overloaded") || messageLower.includes("high demand") || messageLower.includes("spikes in demand")) {
+    return "The Gemini service is temporarily overloaded due to high demand. We made 3 retry attempts, but the server is still unavailable. Please check back in a few seconds.";
+  }
+  
+  return err.message || String(err);
+}
+
+function toTitleCase(str: string): string {
+  if (!str) return "";
+  return str
+    .split(/[-_.\s]+/)
+    .filter(Boolean)
+    .map((word) => {
+      if (word.toLowerCase() === "and") return "and";
+      if (word.toLowerCase() === "or") return "or";
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(" ");
 }
 
 // API routes go here FIRST
@@ -188,24 +325,27 @@ app.get("/firebase-config.js", (req, res) => {
 
 app.post("/api/classify", async (req, res) => {
   try {
-    const { domains } = req.body;
+    const { domains, customApiKey } = req.body;
     if (!Array.isArray(domains) || domains.length === 0) {
       return res.status(400).json({ error: "Missing or invalid domains array." });
     }
 
-    const gemini = getGemini();
+    const gemini = getGemini(customApiKey);
 
-    // Split domains into chunks of 25 to avoid token or rate limitations
-    const CHUNK_SIZE = 25;
+    // Split domains into chunks of 40 to avoid token or rate limitations
+    const CHUNK_SIZE = 40;
     const results = [];
 
     for (let i = 0; i < domains.length; i += CHUNK_SIZE) {
       const chunk = domains.slice(i, i + CHUNK_SIZE);
-      const prompt = `Classify the following list of domains.
+      const prompt = `Classify the following list of domains and extract their identity details.
 For each domain, identify:
-1. Category - Must be strictly one of: "e-commerce", "technology", "blogs", or "other" (representing other generic/specific websites outside these three).
-2. Is the domain a News publisher? - Must be strictly "Yes" or "No".
-3. A brief explanation/reasoning of 1 short sentence why it was categorized this way.
+1. Site name slug/short identifier in Title Case (e.g. 'Ritm Evrazii', 'Kaktus Media')
+2. Official/polished display name in Title Case and FULL expanded form rather than short abbreviation (e.g. 'British Broadcasting Corporation' instead of 'BBC')
+3. Detailed site description (e.g., 'An independent regional news outlet...' or 'Global e-commerce portal...')
+4. Category - Must be strictly one of: "e-commerce", "technology", "blogs", or "other" (representing other generic/specific websites outside these three).
+5. Is the domain a News publisher? - Must be strictly "Yes" or "No".
+6. A brief explanation/reasoning of 1 short sentence why it was categorized this way.
 
 Domains to classify:
 ${chunk.map((d) => `- ${d}`).join("\n")}`;
@@ -214,7 +354,39 @@ ${chunk.map((d) => `- ${d}`).join("\n")}`;
         model: "gemini-3.5-flash",
         contents: prompt,
         config: {
-          systemInstruction: `You are an expert domain classifier. For each domain provided in the prompt, identify its category ("e-commerce", "technology", "blogs", "other") and whether it is a News publisher ("Yes" or "No"). Keep your reasonings clear, objective, and short (maximum 1 sentence). If a domain is inactive, classify based on its standard historical or industry category, or classify as "other" if unknown. Ensure you return exactly one classification object for every single domain in the input list. Do not omit any domains.`,
+          systemInstruction: `You are an elite, highly intelligent domain classification and brand intelligence system.
+Analyze the provided domain list, using linguistic structures, brand clues, top-level domains (e.g., localized country code TLDs), and historical web knowledge.
+
+GUIDELINES FOR FIELDS:
+1. "siteName": MUST be strictly in Title Case with correct capitalization and spacing (e.g., 'Kaktus Media', 'New York Times', 'GitHub'). No camelCase or lowercase-only brand slugs.
+2. "displayName": MUST be strictly in Title Case and use the FULL expansion of the brand or organization name instead of short abbreviations or acronyms (e.g., use 'British Broadcasting Corporation' instead of 'BBC', 'National Broadcasting Company' instead of 'NBC', 'The New York Times' instead of 'NYT', 'Massachusetts Institute of Technology' instead of 'MIT', 'Cable News Network' instead of 'CNN').
+3. "description": A high-fidelity, comprehensive single-sentence description of the site's primary function, target audience, and content style. Must be clear, informative, and avoid generic statements like "A web domain" or "No description available".
+4. "category": Must be strictly one of: "e-commerce", "technology", "blogs", or "other". Be precise.
+5. "isNewsPublisher": Must be strictly "Yes" or "No". "Yes" only if it actively publishes news articles, current events, reports, or journal updates.
+6. "reasoning": A crisp, one-sentence objective justification for the selected category.
+
+EXAMPLES OF HIGH-QUALITY CLASSIFICATION:
+Input domain: "kaktus.media"
+Result: {
+  "domain": "kaktus.media",
+  "siteName": "Kaktus Media",
+  "displayName": "Kaktus Media",
+  "description": "An independent Russian-language online news portal based in Kyrgyzstan covering current national events, politics, and social developments.",
+  "category": "other",
+  "isNewsPublisher": "Yes",
+  "reasoning": "Active digital publication delivering local and regional news updates in Central Asia."
+}
+
+Input domain: "shopify.com"
+Result: {
+  "domain": "shopify.com",
+  "siteName": "Shopify",
+  "displayName": "Shopify",
+  "description": "A leading global commerce platform providing tools to build, customize, and manage online stores.",
+  "category": "e-commerce",
+  "isNewsPublisher": "No",
+  "reasoning": "Specialized platform dedicated to electronic commerce operations and merchant store builders."
+}`,
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.ARRAY,
@@ -224,6 +396,18 @@ ${chunk.map((d) => `- ${d}`).join("\n")}`;
                 domain: {
                   type: Type.STRING,
                   description: "The exact domain to classify (e.g. example.com). Should match the input domain case-sensitively or in lowercase as provided.",
+                },
+                siteName: {
+                  type: Type.STRING,
+                  description: "A short name or brand identifier formatted strictly in Title Case with spaces (e.g., 'Kaktus Media', 'Ritmeurasia').",
+                },
+                displayName: {
+                  type: Type.STRING,
+                  description: "The formal/official presentation name of the site in Title Case, using full expansions/full form instead of short abbreviations/acronyms (e.g. 'British Broadcasting Corporation' instead of 'BBC', 'National Broadcasting Company' instead of 'NBC').",
+                },
+                description: {
+                  type: Type.STRING,
+                  description: "Full descriptive sentence of the site activity or publication target, preferably in the site's primary language or English if unknown.",
                 },
                 category: {
                   type: Type.STRING,
@@ -238,7 +422,7 @@ ${chunk.map((d) => `- ${d}`).join("\n")}`;
                   description: "A very brief, 1-sentence description/explanation of the classification.",
                 },
               },
-              required: ["domain", "category", "isNewsPublisher", "reasoning"],
+              required: ["domain", "siteName", "displayName", "description", "category", "isNewsPublisher", "reasoning"],
             },
           },
         },
@@ -258,6 +442,9 @@ ${chunk.map((d) => `- ${d}`).join("\n")}`;
           chunk.forEach((d) => {
             results.push({
               domain: d,
+              siteName: toTitleCase(d.split('.')[0]),
+              displayName: toTitleCase(d.split('.')[0]),
+              description: "Unknown site description",
               category: "other",
               isNewsPublisher: "No",
               reasoning: "Failed to parse classification chunk",
@@ -269,6 +456,9 @@ ${chunk.map((d) => `- ${d}`).join("\n")}`;
         chunk.forEach((d) => {
           results.push({
             domain: d,
+            siteName: toTitleCase(d.split('.')[0]),
+            displayName: toTitleCase(d.split('.')[0]),
+            description: "Unknown site description",
             category: "other",
             isNewsPublisher: "No",
             reasoning: "Invalid JSON response from model",
@@ -280,39 +470,42 @@ ${chunk.map((d) => `- ${d}`).join("\n")}`;
     return res.json({ success: true, results });
   } catch (error: any) {
     console.error("Classification error:", error);
-    return res.status(500).json({ error: error.message || "Internal server error" });
+    const readableError = sanitizeGeminiError(error);
+    const isQuota = error.status === 429 || 
+                    String(error.message || "").toLowerCase().includes("quota") ||
+                    String(error.message || "").toLowerCase().includes("resource_exhausted") ||
+                    String(error.message || "").toLowerCase().includes("rate limit") ||
+                    String(error.message || "").toLowerCase().includes("limit: 20") ||
+                    String(error.message || "").toLowerCase().includes("exceeded your current quota");
+    return res.status(isQuota ? 429 : 500).json({ error: readableError });
   }
 });
 
-app.post("/api/validate-news-source", async (req, res) => {
+app.post("/api/check-news-publisher", async (req, res) => {
   try {
-    const { domains } = req.body;
+    const { domains, customApiKey } = req.body;
     if (!Array.isArray(domains) || domains.length === 0) {
       return res.status(400).json({ error: "Missing or invalid domains array." });
     }
 
-    const gemini = getGemini();
+    const gemini = getGemini(customApiKey);
+    const CHUNK_SIZE = 100;
     const results = [];
-    const CHUNK_SIZE = 25;
 
     for (let i = 0; i < domains.length; i += CHUNK_SIZE) {
       const chunk = domains.slice(i, i + CHUNK_SIZE);
-      const prompt = `Identify, find and validate news publisher feed sources & geographic/language metadata for the following domains.
-For each domain, provide:
-1. Primary target Country (e.g. "United States", "India", "Germany", "Global")
-2. Main publishing Language (e.g. "English", "Spanish", "German")
-3. Suggested/standard RSS or Feed URL path representing their content updates (e.g. "https://domain.com/feed", "https://domain.com/rss.xml", or best estimate)
-4. Suggested Sitemap XML URL (e.g. "https://domain.com/sitemap.xml", "https://domain.com/sitemap_index.xml", or best estimate)
-5. Fine-grained News Sub-Categorization (e.g. "General News", "Technology Journalism", "Local Politics", "Sports News", "Financial & Business", "Lifestyle & Entertainment", "Other")
+      const prompt = `Determine if the following domains are News Publishers or not.
+Must be strictly "Yes" (Yes if they actively publish daily/frequent current news stories, articles, reports, or journal updates) or "No" (No if it is a general/specific website like e-commerce, portfolios, company websites, tools, blogs without active general news reporting).
+Provide a brief 1-sentence reasoning.
 
-Domains to analyze:
+Domains:
 ${chunk.map((d) => `- ${d}`).join("\n")}`;
 
       const response = await generateContentWithRetry(gemini, {
         model: "gemini-3.5-flash",
         contents: prompt,
         config: {
-          systemInstruction: `You are an expert news publication analyzer. For each domain provided, find/estimate its target audience country, primary language, standard RSS/Feed URL endpoint, Sitemap XML endpoint, and fine-grained news sub-category. Return structural JSON matching the required schema. Ensure every single input domain receives exactly one result object in the return array. Do not miss any domains from the chunk.`,
+          systemInstruction: `You are a super fast domain intelligence assistant. For each input domain, determine if it is a News Publisher ("Yes" or "No") and provide a brief 1-sentence reason. Do not return any other fields.`,
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.ARRAY,
@@ -321,38 +514,26 @@ ${chunk.map((d) => `- ${d}`).join("\n")}`;
               properties: {
                 domain: {
                   type: Type.STRING,
-                  description: "The exact domain being analyzed (e.g. example.com)."
+                  description: "The exact input domain (e.g. example.com).",
                 },
-                country: {
+                isNewsPublisher: {
                   type: Type.STRING,
-                  description: "Full primary destination country name, e.g. 'United States', 'Global', 'India'."
+                  description: "Must be strictly 'Yes' or 'No'.",
                 },
-                language: {
+                reasoning: {
                   type: Type.STRING,
-                  description: "Primary content language, e.g. 'English', 'Spanish', 'Hindi'."
+                  description: "A very brief, 1-sentence description of why it is or is not a news publisher.",
                 },
-                rssUrl: {
-                  type: Type.STRING,
-                  description: "Standard absolute path to RSS feed or content feed (e.g. 'https://domain.com/feed' or 'https://domain.com/rss')."
-                },
-                sitemapUrl: {
-                  type: Type.STRING,
-                  description: "Standard sitemap URL (e.g. 'https://domain.com/sitemap.xml')."
-                },
-                newsCategory: {
-                  type: Type.STRING,
-                  description: "Specific focus, e.g., 'Politics', 'Financial & Business', 'Technology Journalism', 'Sports', 'General News'."
-                }
               },
-              required: ["domain", "country", "language", "rssUrl", "sitemapUrl", "newsCategory"]
-            }
-          }
-        }
+              required: ["domain", "isNewsPublisher", "reasoning"],
+            },
+          },
+        },
       });
 
       const responseText = response.text;
       if (!responseText) {
-        throw new Error("Empty response received from Gemini API during news metadata discovery.");
+        throw new Error("Empty response received from Gemini API.");
       }
 
       try {
@@ -360,28 +541,22 @@ ${chunk.map((d) => `- ${d}`).join("\n")}`;
         if (Array.isArray(parsedChunk)) {
           results.push(...parsedChunk);
         } else {
-          console.error("Gemini news source analysis chunk not an array:", responseText);
+          console.error("Gemini news publisher check didn't return an array:", responseText);
           chunk.forEach((d) => {
             results.push({
               domain: d,
-              country: "Global",
-              language: "English",
-              rssUrl: `https://${d}/feed`,
-              sitemapUrl: `https://${d}/sitemap.xml`,
-              newsCategory: "General News"
+              isNewsPublisher: "No",
+              reasoning: "Failed to parse news status chunk",
             });
           });
         }
       } catch (jsonErr) {
-        console.error("JSON parsing error on Gemini news source output:", jsonErr, responseText);
+        console.error("JSON parsing error on Gemini news check", jsonErr, responseText);
         chunk.forEach((d) => {
           results.push({
             domain: d,
-            country: "Global",
-            language: "English",
-            rssUrl: `https://${d}/feed`,
-            sitemapUrl: `https://${d}/sitemap.xml`,
-            newsCategory: "General News"
+            isNewsPublisher: "No",
+            reasoning: "Invalid JSON response from model",
           });
         });
       }
@@ -389,30 +564,117 @@ ${chunk.map((d) => `- ${d}`).join("\n")}`;
 
     return res.json({ success: true, results });
   } catch (error: any) {
-    console.error("News source metadata discovery error:", error);
+    console.error("News publisher check error:", error);
+    const readableError = sanitizeGeminiError(error);
+    const isQuota = error.status === 429 || 
+                    String(error.message || "").toLowerCase().includes("quota") ||
+                    String(error.message || "").toLowerCase().includes("resource_exhausted") ||
+                    String(error.message || "").toLowerCase().includes("rate limit") ||
+                    String(error.message || "").toLowerCase().includes("limit: 20") ||
+                    String(error.message || "").toLowerCase().includes("exceeded your current quota");
+    return res.status(isQuota ? 429 : 500).json({ error: readableError });
+  }
+});
+
+// Endpoint to fetch Tranco rank details to fetch priorities
+app.post("/api/tranco", async (req, res) => {
+  try {
+    const { domains } = req.body;
+    if (!Array.isArray(domains) || domains.length === 0) {
+      return res.status(400).json({ error: "Missing or invalid domains array." });
+    }
+
+    const results = [];
+    for (const d of domains) {
+      const cleanDom = String(d).trim().toLowerCase();
+      // Refined extraction logic to query base domains on Tranco (e.g. kaktus.media, ritmeurasia.ru)
+      let domainName = cleanDom
+        .replace(/^https?:\/\//i, "")
+        .replace(/^www\./i, "")
+        .split('/')[0]
+        .split(':')[0];
+
+      let rank: number | null = null;
+      let date = "not ranked";
+      let status: "success" | "error" = "success";
+
+      try {
+        const url = `https://tranco-list.eu/api/ranks/domain/${domainName}`;
+        const trancoRes = await fetch(url, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://tranco-list.eu/query",
+            "Origin": "https://tranco-list.eu",
+          },
+        });
+
+        if (trancoRes.status === 429) {
+          date = "rate limited";
+          status = "error";
+        } else if (trancoRes.ok) {
+          const data = await trancoRes.json() as any;
+          if (data && data.ranks && data.ranks.length > 0) {
+            rank = data.ranks[0].rank;
+            date = data.ranks[0].date;
+          }
+        } else {
+          date = trancoRes.status === 404 ? "not ranked" : `HTTP ${trancoRes.status}`;
+          if (trancoRes.status !== 404) {
+            status = "error";
+          }
+        }
+      } catch (err: any) {
+        console.error(`Tranco rank fetch error on ${domainName}:`, err);
+        date = `error: ${err.message || err}`;
+        status = "error";
+      }
+
+      results.push({
+        domain: d,
+        rank,
+        date,
+        status,
+      });
+
+      if (domains.length > 1) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+    }
+
+    return res.json({ success: true, results });
+  } catch (error: any) {
+    console.error("Tranco service error:", error);
     return res.status(500).json({ error: error.message || "Internal server error" });
   }
 });
 
+
+
 app.post("/api/classify-source", async (req, res) => {
   try {
-    const { sources } = req.body;
+    const { sources, customApiKey } = req.body;
     if (!Array.isArray(sources) || sources.length === 0) {
       return res.status(400).json({ error: "Missing or invalid sources array." });
     }
 
-    const gemini = getGemini();
+    const gemini = getGemini(customApiKey);
     const results = [];
-    const CHUNK_SIZE = 25;
+    const CHUNK_SIZE = 40;
 
     for (let i = 0; i < sources.length; i += CHUNK_SIZE) {
       const chunk = sources.slice(i, i + CHUNK_SIZE);
-      const prompt = `Identify and classify the geographic/language target metadata and news/content category for the following feed sources or URLs.
+      const prompt = `Identify and classify the geographic/language target metadata, content category, and source content type for the following feed sources or URLs.
 These represent direct content sources (RSS feeds, sitemap indexes, content streams, or dedicated channels).
+
 For each source URL, determine:
-1. Primary target Country (e.g. "United States", "India", "Germany", "Global", "United Kingdom", "France", etc.)
+1. Primary target Country (e.g. "United States", "India", "Germany", "United Kingdom", "France", "Canada", etc.). NEVER use "Global". If a source covers global news or is a global publisher, determine the primary/major country it covers or its country of origin (e.g., "United Kingdom" for BBC, "United States" for CNN).
 2. Main content Language (e.g. "English", "Spanish", "German", "Hindi", "French", etc.)
-3. Fine-grained Content/News Category (e.g. "Technology & Innovation", "Financial & Markets", "General News", "Sports & Athletics", "Health & Wellness", "Politics", "Lifestyle & Entertainment", "Other")
+3. Main Category - MUST be exactly one of these allowed values:
+   ["top", "sports", "technology", "business", "science", "entertainment", "health", "world", "politics", "environment", "food", "tourism", "education", "domestic", "crime", "other", "lifestyle", "breaking"]
+4. Main Source Type - MUST be exactly one of these allowed values:
+   ["news", "blog", "multimedia", "forum", "pressrelease", "review", "research", "opinion", "analysis", "podcast"]
 
 Sources to classify:
 ${chunk.map((s) => `- ${s}`).join("\n")}`;
@@ -421,7 +683,25 @@ ${chunk.map((s) => `- ${s}`).join("\n")}`;
         model: "gemini-3.5-flash",
         contents: prompt,
         config: {
-          systemInstruction: `You are an expert news and media analyst. For each provided content source / RSS URL, determine its primary target audience country, main language, and fine-grained news sub-category. Return structural JSON matching the required schema. Ensure every single input source receives exactly one result object in the return array. Do not miss any source from the chunk.`,
+          systemInstruction: `You are an expert news and media content analyst specializing in syndication feeds.
+For each provided content feed URL, analyze the path structures, domain components, subfolders, and language markers to identify the metadata.
+
+GUIDELINES:
+1. "source": Keep this exactly identical to the input URL from the prompt.
+2. "country": Primary audience country, parsed from top-level domains or directory folders (e.g., 'United Kingdom', 'United States', 'France', 'India', 'Kyrgyzstan'). STRICT RULE: NEVER output "Global" under any circumstances. If the publisher is global/international, use its primary country of origin, headquarters, or primary target market (e.g. 'United Kingdom' for BBC, 'United States' for CNN or Reuters, 'Qatar' for Al Jazeera).
+3. "language": Primary language (e.g., 'English', 'Russian', 'French', 'Spanish').
+4. "category": Must be one of: "top", "sports", "technology", "business", "science", "entertainment", "health", "world", "politics", "environment", "food", "tourism", "education", "domestic", "crime", "other", "lifestyle", "breaking".
+5. "sourcetype": Must be one of: "news", "blog", "multimedia", "forum", "pressrelease", "review", "research", "opinion", "analysis", "podcast".
+
+EXAMPLES:
+Input: "https://www.ft.com/?format=rss"
+Result: {
+  "source": "https://www.ft.com/?format=rss",
+  "country": "United Kingdom",
+  "language": "English",
+  "category": "business",
+  "sourcetype": "news"
+}`,
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.ARRAY,
@@ -434,7 +714,7 @@ ${chunk.map((s) => `- ${s}`).join("\n")}`;
                 },
                 country: {
                   type: Type.STRING,
-                  description: "Primary destination country name, e.g. 'United States', 'Global', 'India'."
+                  description: "Primary destination country name, e.g. 'United States', 'United Kingdom', 'India'. Do NOT use 'Global'."
                 },
                 language: {
                   type: Type.STRING,
@@ -442,10 +722,24 @@ ${chunk.map((s) => `- ${s}`).join("\n")}`;
                 },
                 category: {
                   type: Type.STRING,
-                  description: "Specific news/content sub-category, e.g., 'Politics', 'Financial & Markets', 'Technology & Innovation', 'Sports & Athletics', 'General News'."
+                  enum: [
+                    "top", "sports", "technology", "business", "science", 
+                    "entertainment", "health", "world", "politics", 
+                    "environment", "food", "tourism", "education", 
+                    "domestic", "crime", "other", "lifestyle", "breaking"
+                  ],
+                  description: "Primary content category matching exactly one of the allowed categories."
+                },
+                sourcetype: {
+                  type: Type.STRING,
+                  enum: [
+                    "news", "blog", "multimedia", "forum", "pressrelease", 
+                    "review", "research", "opinion", "analysis", "podcast"
+                  ],
+                  description: "Primary source type matching exactly one of the allowed sourcetypes."
                 }
               },
-              required: ["source", "country", "language", "category"]
+              required: ["source", "country", "language", "category", "sourcetype"]
             }
           }
         }
@@ -465,9 +759,10 @@ ${chunk.map((s) => `- ${s}`).join("\n")}`;
           chunk.forEach((s) => {
             results.push({
               source: s,
-              country: "Global",
+              country: "United States",
               language: "English",
-              category: "General News"
+              category: "other",
+              sourcetype: "news"
             });
           });
         }
@@ -476,9 +771,10 @@ ${chunk.map((s) => `- ${s}`).join("\n")}`;
         chunk.forEach((s) => {
           results.push({
             source: s,
-            country: "Global",
+            country: "United States",
             language: "English",
-            category: "General News"
+            category: "other",
+            sourcetype: "news"
           });
         });
       }
@@ -487,7 +783,14 @@ ${chunk.map((s) => `- ${s}`).join("\n")}`;
     return res.json({ success: true, results });
   } catch (error: any) {
     console.error("Source-level classification error:", error);
-    return res.status(500).json({ error: error.message || "Internal server error" });
+    const readableError = sanitizeGeminiError(error);
+    const isQuota = error.status === 429 || 
+                    String(error.message || "").toLowerCase().includes("quota") ||
+                    String(error.message || "").toLowerCase().includes("resource_exhausted") ||
+                    String(error.message || "").toLowerCase().includes("rate limit") ||
+                    String(error.message || "").toLowerCase().includes("limit: 20") ||
+                    String(error.message || "").toLowerCase().includes("exceeded your current quota");
+    return res.status(isQuota ? 429 : 500).json({ error: readableError });
   }
 });
 
