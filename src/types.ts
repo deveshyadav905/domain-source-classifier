@@ -4,7 +4,7 @@ export interface DomainRow {
   d_url?: string;
   originalValues: string[];
   category?: "e-commerce" | "technology" | "blogs" | "other";
-  isNewsPublisher?: "Yes" | "No";
+  isNewsPublisher?: string;
   reasoning?: string;
   siteName?: string;
   displayName?: string;
@@ -29,7 +29,7 @@ export interface DomainRow {
 export interface ClassificationResult {
   domain: string;
   category: "e-commerce" | "technology" | "blogs" | "other";
-  isNewsPublisher: "Yes" | "No";
+  isNewsPublisher: string;
   reasoning: string;
   siteName?: string;
   displayName?: string;

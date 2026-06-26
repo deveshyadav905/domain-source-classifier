@@ -26,8 +26,30 @@ export default function VisualCharts({ rows }: VisualChartsProps) {
   const blog = successes.filter((r) => r.category === "blogs").length;
   const other = successes.filter((r) => r.category === "other").length;
 
-  const isNewsNum = successes.filter((r) => r.isNewsPublisher === "Yes").length;
-  const isNotNewsNum = successes.filter((r) => r.isNewsPublisher === "No").length;
+  const isNewsNum = successes.filter((r) => r.isNewsPublisher === "Yes" || r.isNewsPublisher === "News Publisher").length;
+
+  // Dynamic Page Purposes counts
+  const purposeMap: Record<string, number> = {};
+  successes.forEach((r) => {
+    if (r.isNewsPublisher) {
+      const cleanVal = r.isNewsPublisher === "Yes" ? "News Publisher" : (r.isNewsPublisher === "No" ? "Other (No News)" : r.isNewsPublisher);
+      purposeMap[cleanVal] = (purposeMap[cleanVal] || 0) + 1;
+    }
+  });
+
+  const purposeColors: Record<string, string> = {
+    "News Publisher": "#10b981",       // emerald
+    "University / Education": "#6366f1", // indigo
+    "Product Website": "#3b82f6",       // blue
+    "Organization": "#14b8a6",          // teal
+    "Blog": "#f59e0b",                  // amber
+    "Corporate / Company": "#8b5cf6",   // purple
+    "Government": "#f43f5e",            // rose
+    "E-commerce": "#ec4899",            // pink
+    "Social Media / Forum": "#0ea5e9",  // sky
+    "Other": "#9ca3af",                 // gray
+    "Other (No News)": "#6b7280"        // dark gray
+  };
 
   const catData = [
     { name: "E-Commerce", value: ecom, color: "#6366f1" }, // indigo
@@ -36,10 +58,11 @@ export default function VisualCharts({ rows }: VisualChartsProps) {
     { name: "Other (Standard)", value: other, color: "#9ca3af" },  // gray
   ].filter((d) => d.value > 0);
 
-  const newsData = [
-    { name: "News Publisher", value: isNewsNum, color: "#ef4444" }, // red
-    { name: "Standard Site", value: isNotNewsNum, color: "#10b981" }, // emerald
-  ].filter((d) => d.value > 0);
+  const newsData = Object.entries(purposeMap).map(([name, val]) => ({
+    name,
+    value: val,
+    color: purposeColors[name] || "#9ca3af"
+  })).sort((a, b) => b.value - a.value);
 
   // If no items have been classified yet, show empty/graceful guide state
   if (processed === 0) {
@@ -140,10 +163,10 @@ export default function VisualCharts({ rows }: VisualChartsProps) {
           </div>
         </div>
 
-        {/* News Publisher Breakdown (Bar Chart) */}
+        {/* Webpage Purpose Breakdown (Bar Chart) */}
         <div className="bg-white border border-gray-100 p-6 rounded-2xl shadow-xs flex flex-col min-h-0 min-w-0">
           <h3 className="font-display font-semibold text-gray-900 text-sm mb-4">
-            News Publisher Status
+            Webpage Purpose Breakdown
           </h3>
           <div className="h-64 w-full relative min-h-0 min-w-0">
             {newsData.length === 0 ? (

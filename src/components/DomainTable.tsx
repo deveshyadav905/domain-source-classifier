@@ -181,20 +181,83 @@ export default function DomainTable({
     }
     if (status === "error") {
       return (
-        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-red-600 bg-red-50/60 px-2 py-0.5 rounded-md border border-red-100" title="News check failed">
+        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-red-600 bg-red-50/60 px-2 py-0.5 rounded-md border border-red-100" title="Check failed">
           <AlertCircle className="h-3 w-3 text-red-500" />
           Error
         </span>
       );
     }
     if (!isNews) return <span className="text-gray-400 text-xs italic">pending check</span>;
-    return isNews === "Yes" ? (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-100">
-        Yes (News)
-      </span>
-    ) : (
-      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-slate-50 text-slate-600 border border-slate-100">
-        No
+
+    const val = String(isNews).trim();
+
+    if (val === "News Publisher" || val === "Yes") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-100">
+          News Publisher
+        </span>
+      );
+    }
+    if (val === "University / Education") {
+      return (
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">
+          University / Education
+        </span>
+      );
+    }
+    if (val === "Product Website") {
+      return (
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-100">
+          Product Website
+        </span>
+      );
+    }
+    if (val === "Organization") {
+      return (
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold bg-teal-50 text-teal-700 border border-teal-100">
+          Organization
+        </span>
+      );
+    }
+    if (val === "Blog") {
+      return (
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-100">
+          Blog
+        </span>
+      );
+    }
+    if (val === "Corporate / Company") {
+      return (
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold bg-violet-50 text-violet-700 border border-violet-100">
+          Corporate / Company
+        </span>
+      );
+    }
+    if (val === "Government") {
+      return (
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-100">
+          Government
+        </span>
+      );
+    }
+    if (val === "E-commerce") {
+      return (
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold bg-pink-50 text-pink-700 border border-pink-100">
+          E-commerce
+        </span>
+      );
+    }
+    if (val === "Social Media / Forum") {
+      return (
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold bg-sky-50 text-sky-700 border border-sky-100">
+          Social Media / Forum
+        </span>
+      );
+    }
+
+    return (
+      <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-slate-50 text-slate-600 border border-slate-100">
+        {val === "No" ? "Other (No News)" : val}
       </span>
     );
   };
@@ -316,7 +379,7 @@ export default function DomainTable({
                   <option value="other">Other</option>
                 </select>
 
-                {/* News Publisher SELECT */}
+                {/* Webpage Purpose / Domain Type SELECT */}
                 <select
                   value={filterNews}
                   onChange={(e) => {
@@ -325,7 +388,18 @@ export default function DomainTable({
                   }}
                   className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs bg-white text-gray-700 focus:outline-hidden cursor-pointer"
                 >
-                  <option value="">All News Status</option>
+                  <option value="">All Page Purposes</option>
+                  <option value="News Publisher">News Publisher</option>
+                  <option value="University / Education">University / Education</option>
+                  <option value="Product Website">Product Website</option>
+                  <option value="Organization">Organization</option>
+                  <option value="Blog">Blog</option>
+                  <option value="Corporate / Company">Corporate / Company</option>
+                  <option value="Government">Government</option>
+                  <option value="E-commerce">E-commerce</option>
+                  <option value="Social Media / Forum">Social Media / Forum</option>
+                  <option value="Other">Other</option>
+                  {/* Backward compatibility with legacy inputs */}
                   <option value="Yes">Yes (News Publisher)</option>
                   <option value="No">No (Standard Site)</option>
                 </select>
@@ -396,7 +470,7 @@ export default function DomainTable({
         <div className="flex items-center gap-2 text-[11px] text-gray-500 bg-amber-50/50 border border-amber-100/60 p-2.5 rounded-xl">
           <span className="font-bold text-amber-700 font-mono bg-amber-100 px-1.5 py-0.5 rounded uppercase text-[9px]">Token Saver</span>
           <p>
-            Optimize your costs! First run <strong>Check News Publisher (Yes/No)</strong> to classify your list. Then, running <strong>AI META</strong> will automatically skip all non-news domains, saving you massive Gemini API tokens.
+            Optimize your costs! First run <strong>Check Page Purpose</strong> to classify your list. Then, running <strong>AI META</strong> will automatically skip all non-news domains, saving you massive Gemini API tokens.
           </p>
         </div>
 
@@ -406,8 +480,8 @@ export default function DomainTable({
             <>
               {/* Feature 0 Button: News Publisher Check */}
               <div className="flex items-center gap-2.5 bg-amber-50/40 p-1 px-2 rounded-xl border border-amber-200/50">
-                <span className="text-[10px] uppercase font-bold tracking-wider text-amber-700 bg-amber-100/80 p-0.5 px-1.5 rounded flex items-center gap-1.5" title="Checks if domain is a news publisher (Yes/No)">
-                  <span>NEWS CHECK</span>
+                <span className="text-[10px] uppercase font-bold tracking-wider text-amber-700 bg-amber-100/80 p-0.5 px-1.5 rounded flex items-center gap-1.5" title="Checks the domain type / webpage purpose">
+                  <span>PAGE PURPOSE</span>
                   <span className="text-[9px] font-mono bg-white px-1.5 py-0.2 rounded-full text-amber-800 font-bold border border-amber-100 animate-pulse">
                     {countNewsChecked}/{countTotal}
                   </span>
@@ -423,19 +497,19 @@ export default function DomainTable({
                       }}
                       disabled={isCheckingNewsPublisher}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 text-white rounded-lg text-[11px] font-bold hover:bg-amber-700 disabled:opacity-50 transition-colors shadow-2xs cursor-pointer"
-                      title="Run News Publisher status check for chosen rows"
+                      title="Run Page Purpose check for chosen rows"
                     >
                       <Sparkles className="h-3.5 w-3.5 text-amber-200" />
-                      Check News Status ({selectedIndices.length})
+                      Check Page Purpose ({selectedIndices.length})
                     </button>
                     {isCheckingNewsPublisher && (
                       <button
                         onClick={onStopAllProcesses}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-650 hover:bg-red-700 text-white rounded-lg text-[11px] font-bold transition-all shadow-2xs cursor-pointer animate-pulse"
-                        title="Stop check news publisher process"
+                        title="Stop check webpage purpose process"
                       >
                         <span className="h-1.5 w-1.5 rounded-full bg-white block animate-ping mr-1"></span>
-                        Stop News Check
+                        Stop Purpose Check
                       </button>
                     )}
                   </div>
@@ -445,19 +519,19 @@ export default function DomainTable({
                       onClick={onCheckNewsPublisherRemaining}
                       disabled={isCheckingNewsPublisher || countNewsPending === 0}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 text-white rounded-lg text-[11px] font-bold hover:bg-amber-700 disabled:opacity-50 transition-colors shadow-2xs cursor-pointer"
-                      title="Run News Publisher status check for all remaining rows"
+                      title="Run Page Purpose check for all remaining rows"
                     >
                       <RefreshCw className={`h-3.5 w-3.5 ${isCheckingNewsPublisher ? "animate-spin" : ""}`} />
-                      Check News Publisher (Yes/No) ({countNewsPending})
+                      Check Page Purpose ({countNewsPending})
                     </button>
                     {isCheckingNewsPublisher && (
                       <button
                         onClick={onStopAllProcesses}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-650 hover:bg-red-700 text-white rounded-lg text-[11px] font-bold transition-all shadow-2xs cursor-pointer animate-pulse"
-                        title="Stop check news publisher process"
+                        title="Stop check webpage purpose process"
                       >
                         <span className="h-1.5 w-1.5 rounded-full bg-white block animate-ping mr-1"></span>
-                        Stop News Check
+                        Stop Purpose Check
                       </button>
                     )}
                     {failedNewsPublisherCount > 0 && !isCheckingNewsPublisher && (
@@ -752,7 +826,7 @@ export default function DomainTable({
                       <th className="py-3 px-6">Domain URL</th>
                       <th className="py-3 px-4">Site Name</th>
                       <th className="py-3 px-4">Status & Category</th>
-                      <th className="py-3 px-4">News Pub</th>
+                      <th className="py-3 px-4">Page Purpose</th>
                       <th className="py-3 px-4">Tranco Priority</th>
                       <th className="py-3 px-6 w-2/5">Detailed Brand Identity & Description</th>
                     </>

@@ -220,16 +220,19 @@ async function generateContentWithRetry(gemini: GoogleGenAI, params: any, retrie
         const currentModelIndex = modelsToTry.indexOf(model);
         const hasFallbackModel = currentModelIndex !== -1 && currentModelIndex < modelsToTry.length - 1;
 
-        if ((isQuotaExceeded || isOverloaded) && hasFallbackModel) {
-          console.warn(`Model ${model} is overloaded, busy or quota exceeded. Swapping immediately to next fallback model...`);
+        // For quota errors, immediately break to try the next fallback model
+        if (isQuotaExceeded && hasFallbackModel) {
+          console.warn(`Model ${model} quota exceeded. Swapping immediately to next fallback model...`);
           break; // Break inner loop of this model to try the next model instantly
         }
 
+        // For overloaded errors, we should retry the same model with exponential backoff
         if (isOverloaded && attempt < retries - 1) {
           const delay = baseDelayMs * Math.pow(2, attempt);
           console.warn(`Transient busy error on ${model} (attempt ${attempt + 1}/${retries}): ${err.message}. Retrying in ${delay}ms...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         } else {
+          // If overloaded and we ran out of retries, or if it is any other non-retriable error
           console.error(`Attempt ${attempt + 1} with ${model} failed or reached max attempts: ${err.message}`);
           break; // Stop retrying this model, proceed to the fallback model if any
         }
@@ -344,7 +347,7 @@ For each domain, identify:
 2. Official/polished display name in Title Case and FULL expanded form rather than short abbreviation (e.g. 'British Broadcasting Corporation' instead of 'BBC')
 3. Detailed site description (e.g., 'An independent regional news outlet...' or 'Global e-commerce portal...')
 4. Category - Must be strictly one of: "e-commerce", "technology", "blogs", or "other" (representing other generic/specific websites outside these three).
-5. Is the domain a News publisher? - Must be strictly "Yes" or "No".
+5. What is the webpage type/purpose of the domain? Must be strictly one of the allowed values: ["News Publisher", "University / Education", "Product Website", "Organization", "Blog", "Corporate / Company", "Government", "E-commerce", "Social Media / Forum", "Other"].
 6. A brief explanation/reasoning of 1 short sentence why it was categorized this way.
 
 Domains to classify:
@@ -362,7 +365,7 @@ GUIDELINES FOR FIELDS:
 2. "displayName": MUST be strictly in Title Case and use the FULL expansion of the brand or organization name instead of short abbreviations or acronyms (e.g., use 'British Broadcasting Corporation' instead of 'BBC', 'National Broadcasting Company' instead of 'NBC', 'The New York Times' instead of 'NYT', 'Massachusetts Institute of Technology' instead of 'MIT', 'Cable News Network' instead of 'CNN').
 3. "description": A high-fidelity, comprehensive single-sentence description of the site's primary function, target audience, and content style. Must be clear, informative, and avoid generic statements like "A web domain" or "No description available".
 4. "category": Must be strictly one of: "e-commerce", "technology", "blogs", or "other". Be precise.
-5. "isNewsPublisher": Must be strictly "Yes" or "No". "Yes" only if it actively publishes news articles, current events, reports, or journal updates.
+5. "isNewsPublisher": Must be strictly one of: ["News Publisher", "University / Education", "Product Website", "Organization", "Blog", "Corporate / Company", "Government", "E-commerce", "Social Media / Forum", "Other"]. Identify the webpage purpose/type.
 6. "reasoning": A crisp, one-sentence objective justification for the selected category.
 
 EXAMPLES OF HIGH-QUALITY CLASSIFICATION:
@@ -373,7 +376,7 @@ Result: {
   "displayName": "Kaktus Media",
   "description": "An independent Russian-language online news portal based in Kyrgyzstan covering current national events, politics, and social developments.",
   "category": "other",
-  "isNewsPublisher": "Yes",
+  "isNewsPublisher": "News Publisher",
   "reasoning": "Active digital publication delivering local and regional news updates in Central Asia."
 }
 
@@ -384,8 +387,19 @@ Result: {
   "displayName": "Shopify",
   "description": "A leading global commerce platform providing tools to build, customize, and manage online stores.",
   "category": "e-commerce",
-  "isNewsPublisher": "No",
+  "isNewsPublisher": "Product Website",
   "reasoning": "Specialized platform dedicated to electronic commerce operations and merchant store builders."
+}
+
+Input domain: "harvard.edu"
+Result: {
+  "domain": "harvard.edu",
+  "siteName": "Harvard University",
+  "displayName": "Harvard University",
+  "description": "A private Ivy League research university in Cambridge, Massachusetts, renowned globally for its academic excellence.",
+  "category": "other",
+  "isNewsPublisher": "University / Education",
+  "reasoning": "Official academic domain of a world-renowned higher education institution."
 }`,
           responseMimeType: "application/json",
           responseSchema: {
@@ -415,7 +429,7 @@ Result: {
                 },
                 isNewsPublisher: {
                   type: Type.STRING,
-                  description: "Must be strictly 'Yes' or 'No'. Yes if they publish daily/frequent current news stories/articles.",
+                  description: "Must be strictly one of: 'News Publisher', 'University / Education', 'Product Website', 'Organization', 'Blog', 'Corporate / Company', 'Government', 'E-commerce', 'Social Media / Forum', 'Other'.",
                 },
                 reasoning: {
                   type: Type.STRING,
@@ -446,7 +460,7 @@ Result: {
               displayName: toTitleCase(d.split('.')[0]),
               description: "Unknown site description",
               category: "other",
-              isNewsPublisher: "No",
+              isNewsPublisher: "Other",
               reasoning: "Failed to parse classification chunk",
             });
           });
@@ -460,7 +474,7 @@ Result: {
             displayName: toTitleCase(d.split('.')[0]),
             description: "Unknown site description",
             category: "other",
-            isNewsPublisher: "No",
+            isNewsPublisher: "Other",
             reasoning: "Invalid JSON response from model",
           });
         });
@@ -494,9 +508,9 @@ app.post("/api/check-news-publisher", async (req, res) => {
 
     for (let i = 0; i < domains.length; i += CHUNK_SIZE) {
       const chunk = domains.slice(i, i + CHUNK_SIZE);
-      const prompt = `Determine if the following domains are News Publishers or not.
-Must be strictly "Yes" (Yes if they actively publish daily/frequent current news stories, articles, reports, or journal updates) or "No" (No if it is a general/specific website like e-commerce, portfolios, company websites, tools, blogs without active general news reporting).
-Provide a brief 1-sentence reasoning.
+      const prompt = `Determine the webpage purpose/type of the following domains.
+Must be strictly one of these allowed values: ["News Publisher", "University / Education", "Product Website", "Organization", "Blog", "Corporate / Company", "Government", "E-commerce", "Social Media / Forum", "Other"].
+Provide a brief 1-sentence reasoning explaining why it was classified under this type.
 
 Domains:
 ${chunk.map((d) => `- ${d}`).join("\n")}`;
@@ -505,7 +519,21 @@ ${chunk.map((d) => `- ${d}`).join("\n")}`;
         model: "gemini-3.5-flash",
         contents: prompt,
         config: {
-          systemInstruction: `You are a super fast domain intelligence assistant. For each input domain, determine if it is a News Publisher ("Yes" or "No") and provide a brief 1-sentence reason. Do not return any other fields.`,
+          systemInstruction: `You are an elite, super fast domain intelligence assistant. For each input domain, determine its primary webpage purpose / domain type and provide a brief 1-sentence reasoning.
+
+The webpage purpose/type MUST be strictly chosen from:
+- 'News Publisher' (or similar general current news/articles portal)
+- 'University / Education' (educational and academic institution website)
+- 'Product Website' (for a tool, software, service, or brand product)
+- 'Organization' (non-profit, civic, international or private organization)
+- 'Blog' (personal, hobby, specialized or community blog site)
+- 'Corporate / Company' (general company homepage or business agency)
+- 'Government' (official state or city governance portal)
+- 'E-commerce' (shopping web stores and retail marketplaces)
+- 'Social Media / Forum' (discussion communities and interactive social networks)
+- 'Other' (anything else)
+
+Do not return any other fields in the JSON object besides the schema properties.`,
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.ARRAY,
@@ -518,11 +546,11 @@ ${chunk.map((d) => `- ${d}`).join("\n")}`;
                 },
                 isNewsPublisher: {
                   type: Type.STRING,
-                  description: "Must be strictly 'Yes' or 'No'.",
+                  description: "Must be strictly one of: 'News Publisher', 'University / Education', 'Product Website', 'Organization', 'Blog', 'Corporate / Company', 'Government', 'E-commerce', 'Social Media / Forum', 'Other'.",
                 },
                 reasoning: {
                   type: Type.STRING,
-                  description: "A very brief, 1-sentence description of why it is or is not a news publisher.",
+                  description: "A very brief, 1-sentence explanation of why it fits this webpage purpose/type.",
                 },
               },
               required: ["domain", "isNewsPublisher", "reasoning"],
@@ -545,7 +573,7 @@ ${chunk.map((d) => `- ${d}`).join("\n")}`;
           chunk.forEach((d) => {
             results.push({
               domain: d,
-              isNewsPublisher: "No",
+              isNewsPublisher: "Other",
               reasoning: "Failed to parse news status chunk",
             });
           });
@@ -555,7 +583,7 @@ ${chunk.map((d) => `- ${d}`).join("\n")}`;
         chunk.forEach((d) => {
           results.push({
             domain: d,
-            isNewsPublisher: "No",
+            isNewsPublisher: "Other",
             reasoning: "Invalid JSON response from model",
           });
         });
@@ -670,7 +698,7 @@ These represent direct content sources (RSS feeds, sitemap indexes, content stre
 
 For each source URL, determine:
 1. Primary target Country (e.g. "United States", "India", "Germany", "United Kingdom", "France", "Canada", etc.). NEVER use "Global". If a source covers global news or is a global publisher, determine the primary/major country it covers or its country of origin (e.g., "United Kingdom" for BBC, "United States" for CNN).
-2. Main content Language (e.g. "English", "Spanish", "German", "Hindi", "French", etc.)
+2. Main content Language (e.g. "English", "Spanish", "German", "Hindi", "French", etc.). STRICT RULE: Identify the actual, real language in which the source publishes its news/content. Do NOT naively assume the language is "English" just because a URL contains common folders like "/en/" or language-like paths if the publisher actually publishes in another language. Analyze the publisher domain's real identity and native language to make an accurate determination.
 3. Main Category - MUST be exactly one of these allowed values:
    ["top", "sports", "technology", "business", "science", "entertainment", "health", "world", "politics", "environment", "food", "tourism", "education", "domestic", "crime", "other", "lifestyle", "breaking"]
 4. Main Source Type - MUST be exactly one of these allowed values:
@@ -689,7 +717,7 @@ For each provided content feed URL, analyze the path structures, domain componen
 GUIDELINES:
 1. "source": Keep this exactly identical to the input URL from the prompt.
 2. "country": Primary audience country, parsed from top-level domains or directory folders (e.g., 'United Kingdom', 'United States', 'France', 'India', 'Kyrgyzstan'). STRICT RULE: NEVER output "Global" under any circumstances. If the publisher is global/international, use its primary country of origin, headquarters, or primary target market (e.g. 'United Kingdom' for BBC, 'United States' for CNN or Reuters, 'Qatar' for Al Jazeera).
-3. "language": Primary language (e.g., 'English', 'Russian', 'French', 'Spanish').
+3. "language": Primary language (e.g., 'English', 'Russian', 'French', 'Spanish'). STRICT RULE: Carefully identify the actual primary language in which they publish their news content. Do not blindly assume English or get misled by superficial folder segments like '/en/' if the domain itself is a local-language publisher. Must be the actual language used for articles and broadcasts.
 4. "category": Must be one of: "top", "sports", "technology", "business", "science", "entertainment", "health", "world", "politics", "environment", "food", "tourism", "education", "domestic", "crime", "other", "lifestyle", "breaking".
 5. "sourcetype": Must be one of: "news", "blog", "multimedia", "forum", "pressrelease", "review", "research", "opinion", "analysis", "podcast".
 

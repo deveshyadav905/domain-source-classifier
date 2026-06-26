@@ -870,12 +870,18 @@ export default function App() {
     }
 
     // Optimization: separate into news publishers (or unchecked) and non-news publishers
-    const newsPublishersIndices = indicesToRun.filter(
-      (idx) => state.rows[idx] && state.rows[idx].isNewsPublisher !== "No"
-    );
-    const nonNewsPublishersIndices = indicesToRun.filter(
-      (idx) => state.rows[idx] && state.rows[idx].isNewsPublisher === "No"
-    );
+    const newsPublishersIndices = indicesToRun.filter((idx) => {
+      const row = state.rows[idx];
+      if (!row) return false;
+      const isNews = row.isNewsPublisher;
+      return !isNews || isNews === "News Publisher" || isNews === "Yes";
+    });
+    const nonNewsPublishersIndices = indicesToRun.filter((idx) => {
+      const row = state.rows[idx];
+      if (!row) return false;
+      const isNews = row.isNewsPublisher;
+      return isNews && isNews !== "News Publisher" && isNews !== "Yes";
+    });
 
     if (nonNewsPublishersIndices.length > 0) {
       setState((prev) => {
