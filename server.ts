@@ -40,6 +40,7 @@ app.get("/api/fetch-sheet", async (req, res) => {
     const authHeader = req.headers.authorization;
     let csvText: string | null = null;
     let isAuthorized = false;
+    let hadAuth401 = false;
 
     // Direct REST API Handshake first (for private spreadsheets using bearer tokens)
     if (authHeader && authHeader !== "Bearer null" && authHeader !== "Bearer undefined") {
@@ -74,18 +75,14 @@ app.get("/api/fetch-sheet", async (req, res) => {
           } else {
             console.warn(`Values REST API fetch failed with status: ${valuesRes.status}`);
             if (valuesRes.status === 401) {
-              return res.status(401).json({
-                error: "Your Google Access Token is missing, expired, or invalid. Please click 'Connect Google Docs' or paste a valid Token.",
-              });
+              hadAuth401 = true;
             }
           }
+        } else if (metaRes.status === 401) {
+          console.warn(`Spreadsheet metadata REST API fetch failed with status: 401`);
+          hadAuth401 = true;
         } else {
           console.warn(`Spreadsheet metadata REST API fetch failed with status: ${metaRes.status}`);
-          if (metaRes.status === 401) {
-            return res.status(401).json({
-              error: "Your Google Access Token is missing, expired, or invalid. Please click 'Connect Google Docs' or paste a valid Token.",
-            });
-          }
         }
       } catch (authFetchErr) {
         console.error("Exception during secure REST API handshake:", authFetchErr);
@@ -103,6 +100,7 @@ app.get("/api/fetch-sheet", async (req, res) => {
       }
 
       let response = await fetch(url, { headers });
+      const originalStatus = response.status;
 
       // Fallback 1: If authorized fetch returned 401/error, retry anonymously!
       if (!response.ok && headers["Authorization"]) {
@@ -128,12 +126,12 @@ app.get("/api/fetch-sheet", async (req, res) => {
       }
 
       if (!response.ok) {
-        const errorStatus = response.status;
-        return res.status(errorStatus === 401 ? 401 : 400).json({
-          error: `Failed to fetch sheet (HTTP ${errorStatus}). ${
-            errorStatus === 401
-              ? "Your Google Access Token is missing, expired, or invalid. Please click 'Connect Google Docs' or paste a valid Token."
-              : errorStatus === 403
+        const finalStatus = (originalStatus === 401 || hadAuth401) ? 401 : response.status;
+        return res.status(finalStatus === 401 ? 401 : 400).json({
+          error: `Failed to fetch sheet (HTTP ${finalStatus}). ${
+            finalStatus === 401
+              ? "Your Google Sheets connection has expired. Please click 'Connect Google Sheets' to refresh access."
+              : finalStatus === 403
                 ? "Access denied. Make sure you have authorized permissions/access to this spreadsheet."
                 : "Make sure the Google Sheet is shared with 'Anyone with the link can view' permission, or authenticate to access it."
           }`,
@@ -292,6 +290,56 @@ function toTitleCase(str: string): string {
     .join(" ");
 }
 
+function toDomainTitleCaseWithoutTLD(domain: string): string {
+  if (!domain) return "";
+  let cleanHost = domain.toLowerCase().trim();
+  if (cleanHost.includes("://")) {
+    cleanHost = cleanHost.split("://")[1];
+  }
+  cleanHost = cleanHost.split("/")[0].split("?")[0];
+  if (cleanHost.startsWith("www.")) {
+    cleanHost = cleanHost.slice(4);
+  }
+
+  const parts = cleanHost.split(".");
+  if (parts.length >= 2) {
+    const lastTwo = parts.slice(-2).join(".");
+    const doubleSuffixes = new Set([
+      "co.uk", "org.uk", "me.uk", "net.uk", "ltd.uk", "plc.uk",
+      "co.jp", "or.jp", "ne.jp", "ac.jp",
+      "com.au", "net.au", "org.au", "edu.au", "gov.au",
+      "com.br", "net.br", "org.br",
+      "com.cn", "net.cn", "org.cn", "gov.cn",
+      "com.mx", "net.mx", "org.mx",
+      "com.tw", "net.tw", "org.tw",
+      "co.in", "net.in", "org.in", "gen.in", "firm.in", "ind.in",
+      "com.sg", "net.sg", "org.sg",
+      "com.tr", "net.tr", "org.tr",
+      "co.za", "net.za", "org.za",
+      "com.hk", "net.hk", "org.hk",
+      "co.nz", "net.nz", "org.nz",
+      "com.ru", "net.ru", "org.ru",
+      "com.ua", "net.ua", "org.ua",
+      "co.id", "web.id", "or.id", "ac.id"
+    ]);
+
+    if (doubleSuffixes.has(lastTwo) && parts.length >= 3) {
+      parts.splice(-2);
+    } else {
+      parts.splice(-1);
+    }
+  }
+
+  const rawName = parts.join(".");
+  return rawName.replace(/([a-zA-Z0-9]+)/g, (match) => {
+    return match.charAt(0).toUpperCase() + match.slice(1).toLowerCase();
+  });
+}
+
+function toDomainTitleCase(domain: string): string {
+  return toDomainTitleCaseWithoutTLD(domain);
+}
+
 // API routes go here FIRST
 app.get("/api/health", (req, res) => {
   res.json({
@@ -335,15 +383,15 @@ app.post("/api/classify", async (req, res) => {
 
     const gemini = getGemini(customApiKey);
 
-    // Split domains into chunks of 40 to avoid token or rate limitations
-    const CHUNK_SIZE = 40;
+    // Split domains into chunks of 100 to avoid token or rate limitations
+    const CHUNK_SIZE = 100;
     const results = [];
 
     for (let i = 0; i < domains.length; i += CHUNK_SIZE) {
       const chunk = domains.slice(i, i + CHUNK_SIZE);
       const prompt = `Classify the following list of domains and extract their identity details.
 For each domain, identify:
-1. Site name slug/short identifier in Title Case (e.g. 'Ritm Evrazii', 'Kaktus Media')
+1. Site name which MUST be the domain name itself WITHOUT the top-level domain (TLD) suffix (e.g. remove '.com', '.net', '.org', '.edu', '.co.uk', '.media', etc.), formatted strictly in Title Case, keeping any dots ('.') or hyphens ('-') exactly as they are in the remaining domain name (e.g., 'Kaktus' for 'kaktus.media', 'Shopify' for 'shopify.com', 'Harvard' for 'harvard.edu', 'Blog.Csdn' for 'blog.csdn.net', 'E-Commerce-Site' for 'e-commerce-site.com').
 2. Official/polished display name in Title Case and FULL expanded form rather than short abbreviation (e.g. 'British Broadcasting Corporation' instead of 'BBC')
 3. Detailed site description (e.g., 'An independent regional news outlet...' or 'Global e-commerce portal...')
 4. Category - Must be strictly one of: "e-commerce", "technology", "blogs", or "other" (representing other generic/specific websites outside these three).
@@ -361,7 +409,7 @@ ${chunk.map((d) => `- ${d}`).join("\n")}`;
 Analyze the provided domain list, using linguistic structures, brand clues, top-level domains (e.g., localized country code TLDs), and historical web knowledge.
 
 GUIDELINES FOR FIELDS:
-1. "siteName": MUST be strictly in Title Case with correct capitalization and spacing (e.g., 'Kaktus Media', 'New York Times', 'GitHub'). No camelCase or lowercase-only brand slugs.
+1. "siteName": MUST be the domain name itself WITHOUT the top-level domain (TLD) suffix (e.g. remove '.com', '.net', '.org', '.edu', '.co.uk', '.media', etc.), formatted strictly in Title Case, preserving any dots ('.') and hyphens ('-') exactly as they are in the remaining domain URL (e.g., 'Kaktus' for 'kaktus.media', 'Shopify' for 'shopify.com', 'Harvard' for 'harvard.edu', 'Blog.Csdn' for 'blog.csdn.net', 'E-Commerce-Site' for 'e-commerce-site.com'). Do NOT keep or include the TLD suffix under any circumstances.
 2. "displayName": MUST be strictly in Title Case and use the FULL expansion of the brand or organization name instead of short abbreviations or acronyms (e.g., use 'British Broadcasting Corporation' instead of 'BBC', 'National Broadcasting Company' instead of 'NBC', 'The New York Times' instead of 'NYT', 'Massachusetts Institute of Technology' instead of 'MIT', 'Cable News Network' instead of 'CNN').
 3. "description": A high-fidelity, comprehensive single-sentence description of the site's primary function, target audience, and content style. Must be clear, informative, and avoid generic statements like "A web domain" or "No description available".
 4. "category": Must be strictly one of: "e-commerce", "technology", "blogs", or "other". Be precise.
@@ -372,7 +420,7 @@ EXAMPLES OF HIGH-QUALITY CLASSIFICATION:
 Input domain: "kaktus.media"
 Result: {
   "domain": "kaktus.media",
-  "siteName": "Kaktus Media",
+  "siteName": "Kaktus",
   "displayName": "Kaktus Media",
   "description": "An independent Russian-language online news portal based in Kyrgyzstan covering current national events, politics, and social developments.",
   "category": "other",
@@ -394,12 +442,23 @@ Result: {
 Input domain: "harvard.edu"
 Result: {
   "domain": "harvard.edu",
-  "siteName": "Harvard University",
+  "siteName": "Harvard",
   "displayName": "Harvard University",
   "description": "A private Ivy League research university in Cambridge, Massachusetts, renowned globally for its academic excellence.",
   "category": "other",
   "isNewsPublisher": "University / Education",
   "reasoning": "Official academic domain of a world-renowned higher education institution."
+}
+
+Input domain: "blog.csdn.net"
+Result: {
+  "domain": "blog.csdn.net",
+  "siteName": "Blog.Csdn",
+  "displayName": "CSDN Blog Platform",
+  "description": "A leading professional Chinese IT technology community and blogging platform for software developers.",
+  "category": "technology",
+  "isNewsPublisher": "Blog",
+  "reasoning": "Tech blogging and developer community platform."
 }`,
           responseMimeType: "application/json",
           responseSchema: {
@@ -413,7 +472,7 @@ Result: {
                 },
                 siteName: {
                   type: Type.STRING,
-                  description: "A short name or brand identifier formatted strictly in Title Case with spaces (e.g., 'Kaktus Media', 'Ritmeurasia').",
+                  description: "The domain name itself WITHOUT the top-level domain (TLD) suffix, formatted strictly in Title Case, preserving any dots ('.') and hyphens ('-') exactly as they are in the remaining domain name (e.g. 'Kaktus' for 'kaktus.media', 'Shopify' for 'shopify.com', 'Blog.Csdn' for 'blog.csdn.net').",
                 },
                 displayName: {
                   type: Type.STRING,
@@ -456,7 +515,7 @@ Result: {
           chunk.forEach((d) => {
             results.push({
               domain: d,
-              siteName: toTitleCase(d.split('.')[0]),
+              siteName: toDomainTitleCase(d),
               displayName: toTitleCase(d.split('.')[0]),
               description: "Unknown site description",
               category: "other",
@@ -470,7 +529,7 @@ Result: {
         chunk.forEach((d) => {
           results.push({
             domain: d,
-            siteName: toTitleCase(d.split('.')[0]),
+            siteName: toDomainTitleCase(d),
             displayName: toTitleCase(d.split('.')[0]),
             description: "Unknown site description",
             category: "other",
@@ -689,7 +748,7 @@ app.post("/api/classify-source", async (req, res) => {
 
     const gemini = getGemini(customApiKey);
     const results = [];
-    const CHUNK_SIZE = 40;
+    const CHUNK_SIZE = 100;
 
     for (let i = 0; i < sources.length; i += CHUNK_SIZE) {
       const chunk = sources.slice(i, i + CHUNK_SIZE);

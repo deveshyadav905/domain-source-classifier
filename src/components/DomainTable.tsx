@@ -822,22 +822,24 @@ export default function DomainTable({
                   <th className="py-3 px-4 w-8 text-center">Row</th>
                   {appMode === "domains" ? (
                     <>
-                      <th className="py-3 px-6 text-left text-gray-500 font-mono text-[11px] uppercase tracking-wider font-bold">d_url</th>
-                      <th className="py-3 px-6">Domain URL</th>
-                      <th className="py-3 px-4">Site Name</th>
-                      <th className="py-3 px-4">Status & Category</th>
-                      <th className="py-3 px-4">Page Purpose</th>
-                      <th className="py-3 px-4">Tranco Priority</th>
-                      <th className="py-3 px-6 w-2/5">Detailed Brand Identity & Description</th>
+                      <th className="py-3 px-4 text-left">Name</th>
+                      <th className="py-3 px-4 text-left">Display_Name</th>
+                      <th className="py-3 px-6 text-left w-1/4">Detailed Brand Identity & Description</th>
+                      <th className="py-3 px-4 text-left">Domain(url)</th>
+                      <th className="py-3 px-4 text-left">Base Domain</th>
+                      <th className="py-3 px-4 text-center">Status</th>
+                      <th className="py-3 px-4 text-center">Tranco Traffic Rank</th>
+                      <th className="py-3 px-4 text-center">Category</th>
+                      <th className="py-3 px-4 text-center">Page Purpose</th>
+                      <th className="py-3 px-6 text-left">Ai Reasoning</th>
                     </>
                   ) : (
                     <>
-                      <th className="py-3 px-6 text-left text-gray-500 font-mono text-[11px] uppercase tracking-wider font-bold">d_url</th>
-                      <th className="py-3 px-6">Source URL (Direct Feed)</th>
+                      <th className="py-3 px-6 text-left">Source URL (fULL URL)</th>
                       <th className="py-3 px-4 text-center">Status</th>
                       <th className="py-3 px-4 text-center">Target Country</th>
                       <th className="py-3 px-4 text-center">Language</th>
-                      <th className="py-3 px-4">News Category</th>
+                      <th className="py-3 px-4 text-left">News Category</th>
                       <th className="py-3 px-4 text-center">Source Type</th>
                     </>
                   )}
@@ -866,53 +868,57 @@ export default function DomainTable({
                       </td>
                       {appMode === "domains" ? (
                         <>
-                          <td className="py-2.5 px-6 font-mono text-gray-500 text-xs select-all" title={row.d_url || row.domain}>
+                          {/* Name: Should be (domain.name) in title case */}
+                          <td className="py-2.5 px-4 font-mono font-medium text-gray-900 text-xs">
+                            {row.siteName ? (
+                              <span className="font-bold text-gray-800 text-xs">{row.siteName}</span>
+                            ) : (
+                              <span className="text-gray-400 italic text-[11px]">-</span>
+                            )}
+                          </td>
+                          {/* Display_Name */}
+                          <td className="py-2.5 px-4 text-xs font-semibold text-gray-800">
+                            {row.displayName ? (
+                              <span>{row.displayName}</span>
+                            ) : (
+                              <span className="text-gray-400 italic text-[11px]">-</span>
+                            )}
+                          </td>
+                          {/* Detailed Brand Identity & Description */}
+                          <td className="py-2.5 px-6 font-sans text-xs leading-relaxed text-left text-gray-800">
+                            {row.description || <span className="text-gray-400 italic text-[11px]">-</span>}
+                          </td>
+                          {/* Domain(url) */}
+                          <td className="py-2.5 px-4 font-mono text-gray-500 text-xs select-all" title={row.d_url || row.domain}>
                             <span className="break-all">{row.d_url || row.domain}</span>
                           </td>
-                          <td className="py-2.5 px-6 font-mono font-medium text-gray-900 text-xs">
+                          {/* Base Domain */}
+                          <td className="py-2.5 px-4 font-mono font-medium text-gray-900 text-xs">
                             <span className="break-all">{row.domain}</span>
                           </td>
-                          <td className="py-2.5 px-4">
-                            {(row.displayName || row.siteName) ? (
-                              <div className="flex flex-col gap-0.5">
-                                {row.displayName && <span className="font-bold text-gray-800 text-xs leading-tight">{row.displayName}</span>}
-                                {row.siteName && <span className="text-[10px] text-gray-400 font-mono">slug: {row.siteName}</span>}
-                              </div>
-                            ) : (
-                              <span className="text-gray-400 italic text-[11px]">pending analysis</span>
-                            )}
+                          {/* Status */}
+                          <td className="py-2.5 px-4 text-center">
+                            {getStatusBadge(row.status, row.errorMsg)}
                           </td>
-                          <td className="py-2.5 px-4 space-y-1">
-                            <div>{getStatusBadge(row.status, row.errorMsg)}</div>
-                            <div className="pt-0.5">{getCategoryBadge(row.category)}</div>
-                          </td>
-                          <td className="py-2.5 px-4">
-                            {getNewsBadge(row.isNewsPublisher, row.newsPublisherStatus)}
-                          </td>
-                          <td className="py-2.5 px-4 text-xs font-medium">
+                          {/* Tranco Traffic Rank */}
+                          <td className="py-2.5 px-4 text-center text-xs font-medium">
                             {getTrancoBadge(row.trancoRank, row.trancoDate, row.trancoStatus)}
                           </td>
-                          <td className="py-2.5 px-6 font-sans text-xs leading-relaxed space-y-1.5 text-left">
-                            {row.description && (
-                              <p className="text-gray-800 font-semibold leading-normal">
-                                {row.description}
-                              </p>
-                            )}
-                            {row.reasoning && (
-                              <p className="text-gray-400 text-[10.5px] italic">
-                                Reasoning: {row.reasoning}
-                              </p>
-                            )}
-                            {!row.description && !row.reasoning && (
-                              <span className="text-gray-400">-</span>
-                            )}
+                          {/* Category */}
+                          <td className="py-2.5 px-4 text-center">
+                            {getCategoryBadge(row.category)}
+                          </td>
+                          {/* Page Purpose */}
+                          <td className="py-2.5 px-4 text-center">
+                            {getNewsBadge(row.isNewsPublisher, row.newsPublisherStatus)}
+                          </td>
+                          {/* Ai Reasoning */}
+                          <td className="py-2.5 px-6 font-sans text-gray-550 text-[10.5px] italic text-left leading-normal">
+                            {row.reasoning || <span className="text-gray-400 italic text-[11px]">-</span>}
                           </td>
                         </>
                       ) : (
                         <>
-                          <td className="py-2.5 px-6 font-mono text-gray-500 text-xs select-all" title={row.d_url || row.domain}>
-                            <span className="break-all">{row.d_url || row.domain}</span>
-                          </td>
                           <td className="py-2.5 px-6 font-mono font-bold text-gray-950 text-xs max-w-xs truncate" title={row.domain}>
                             <span className="flex items-center gap-1.5 text-rose-800 break-all">
                               <Rss className="h-3.5 w-3.5 text-amber-500 shrink-0" />

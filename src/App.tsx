@@ -48,6 +48,52 @@ function toTitleCase(str: string): string {
     .join(" ");
 }
 
+function toDomainTitleCase(domain: string): string {
+  if (!domain) return "";
+  let cleanHost = domain.toLowerCase().trim();
+  if (cleanHost.includes("://")) {
+    cleanHost = cleanHost.split("://")[1];
+  }
+  cleanHost = cleanHost.split("/")[0].split("?")[0];
+  if (cleanHost.startsWith("www.")) {
+    cleanHost = cleanHost.slice(4);
+  }
+
+  const parts = cleanHost.split(".");
+  if (parts.length >= 2) {
+    const lastTwo = parts.slice(-2).join(".");
+    const doubleSuffixes = new Set([
+      "co.uk", "org.uk", "me.uk", "net.uk", "ltd.uk", "plc.uk",
+      "co.jp", "or.jp", "ne.jp", "ac.jp",
+      "com.au", "net.au", "org.au", "edu.au", "gov.au",
+      "com.br", "net.br", "org.br",
+      "com.cn", "net.cn", "org.cn", "gov.cn",
+      "com.mx", "net.mx", "org.mx",
+      "com.tw", "net.tw", "org.tw",
+      "co.in", "net.in", "org.in", "gen.in", "firm.in", "ind.in",
+      "com.sg", "net.sg", "org.sg",
+      "com.tr", "net.tr", "org.tr",
+      "co.za", "net.za", "org.za",
+      "com.hk", "net.hk", "org.hk",
+      "co.nz", "net.nz", "org.nz",
+      "com.ru", "net.ru", "org.ru",
+      "com.ua", "net.ua", "org.ua",
+      "co.id", "web.id", "or.id", "ac.id"
+    ]);
+
+    if (doubleSuffixes.has(lastTwo) && parts.length >= 3) {
+      parts.splice(-2);
+    } else {
+      parts.splice(-1);
+    }
+  }
+
+  const rawName = parts.join(".");
+  return rawName.replace(/([a-zA-Z0-9]+)/g, (match) => {
+    return match.charAt(0).toUpperCase() + match.slice(1).toLowerCase();
+  });
+}
+
 // Simple but robust CSV line parser
 function parseCSV(text: string): string[][] {
   const lines: string[][] = [];
@@ -483,7 +529,7 @@ export default function App() {
       if (!res.ok || !data.success) {
         if (res.status === 401) {
           handleDisconnectGoogle();
-          throw new Error("Your Google Sheets connection has expired. Please re-connect by clicking 'Connect Google Docs' to refresh access.");
+          throw new Error("Your Google Sheets connection has expired. Please re-connect by clicking 'Connect Google Sheets' to refresh access.");
         }
         throw new Error(data.error || "Failed to load sheet data. Ensure the document is shared publicly or you are logged in.");
       }
@@ -534,12 +580,15 @@ export default function App() {
       // Check if Category, News Publisher, Reasoning, Site Name, Display Name, Description already exist in the sheet
       let siteNameColIdx = headers.findIndex((h) => h.toLowerCase() === "site name" || h.toLowerCase() === "sitename");
       let displayNameColIdx = headers.findIndex((h) => h.toLowerCase() === "display name" || h.toLowerCase() === "displayname");
-      let catColIdx = headers.findIndex((h) => h.toLowerCase() === "category" || h.toLowerCase() === "news category" || h.toLowerCase() === "sub-category");
+      let catColIdx = headers.findIndex((h) => h.toLowerCase() === "category" || h.toLowerCase() === "domain category" || h.toLowerCase() === "sub-category");
       let newsColIdx = headers.findIndex((h) => h.toLowerCase() === "news publisher");
       let descColIdx = headers.findIndex((h) => h.toLowerCase() === "domain description" || h.toLowerCase() === "description");
       let trancoColIdx = headers.findIndex((h) => h.toLowerCase() === "tranco traffic rank" || h.toLowerCase() === "tranco rank" || h.toLowerCase() === "priority");
       let reasonColIdx = headers.findIndex((h) => h.toLowerCase() === "reasoning" || h.toLowerCase() === "ai reasoning" || h.toLowerCase() === "ai description / reasoning" || h.toLowerCase() === "ai domain description");
-      let countryColIdx = headers.findIndex((h) => h.toLowerCase() === "country");
+      
+      // Separate lookup for News Category column in sources mode
+      let newsCatColIdx = headers.findIndex((h) => h.toLowerCase() === "news category" || h.toLowerCase() === "news_category" || h.toLowerCase() === "source category");
+      let countryColIdx = headers.findIndex((h) => h.toLowerCase() === "target country" || h.toLowerCase() === "country" || h.toLowerCase() === "geo");
       let langColIdx = headers.findIndex((h) => h.toLowerCase() === "language" || h.toLowerCase() === "lang");
       let sourcetypeColIdx = headers.findIndex((h) => h.toLowerCase() === "sourcetype" || h.toLowerCase() === "source type");
 
@@ -557,7 +606,7 @@ export default function App() {
             .split("/")[0]
             .split("?")[0];
         } else {
-          cleanDomain = rawDomain.replace(/^(https?:\/\/)?(www\.)?/, "");
+          cleanDomain = rawDomain;
         }
 
         // Read pre-existing values if any
@@ -571,10 +620,14 @@ export default function App() {
         const existingCountry = countryColIdx !== -1 ? rawRow[countryColIdx] : undefined;
         const existingLang = langColIdx !== -1 ? rawRow[langColIdx] : undefined;
         const existingSourceType = sourcetypeColIdx !== -1 ? rawRow[sourcetypeColIdx] : undefined;
+        const existingNewsCat = newsCatColIdx !== -1 ? rawRow[newsCatColIdx] : undefined;
 
         const isSuccess = existingCat && existingNews;
         const hasNewsSuccess = isSourcesMode
-          ? (existingCountry && existingLang && existingCat && existingSourceType)
+          ? (existingCountry !== undefined && existingCountry !== null && existingCountry !== "" &&
+             existingLang !== undefined && existingLang !== null && existingLang !== "" &&
+             existingNewsCat !== undefined && existingNewsCat !== null && existingNewsCat !== "" &&
+             existingSourceType !== undefined && existingSourceType !== null && existingSourceType !== "")
           : (existingCountry && existingLang);
 
         let parsedTrancoRank: number | null | undefined = undefined;
@@ -606,7 +659,7 @@ export default function App() {
           country: existingCountry,
           language: existingLang,
           newsCategory: isSourcesMode 
-            ? (existingCat ? normalizeCategory(existingCat) : undefined)
+            ? (existingNewsCat ? normalizeCategory(existingNewsCat) : undefined)
             : (isSuccess ? normalizeCategory(existingCat) : undefined),
           status: isSuccess ? "success" as const : "pending" as const,
           newsStatus: hasNewsSuccess ? "success" as const : "pending" as const,
@@ -621,6 +674,52 @@ export default function App() {
         rows,
         isFetchingSheet: false,
       }));
+
+      // Asynchronously pre-populate fields from the database cache
+      if (rows.length > 0) {
+        const uniqueDomains = Array.from(new Set(rows.map(r => r.domain.toLowerCase().trim()))).filter(Boolean);
+        getCachedDomains(uniqueDomains).then((cachedMap) => {
+          setState((prev) => {
+            const updatedRows = prev.rows.map((row) => {
+              const clean = row.domain.toLowerCase().trim();
+              const cached = cachedMap[clean];
+              if (cached) {
+                const isSuccess = cached.category && cached.isNewsPublisher;
+                const hasNewsSuccess = cached.country && cached.language;
+                return {
+                  ...row,
+                  category: cached.category !== undefined ? cached.category : row.category,
+                  isNewsPublisher: cached.isNewsPublisher !== undefined ? cached.isNewsPublisher : row.isNewsPublisher,
+                  reasoning: cached.reasoning !== undefined ? cached.reasoning : row.reasoning,
+                  siteName: cached.siteName !== undefined ? cached.siteName : row.siteName,
+                  displayName: cached.displayName !== undefined ? cached.displayName : row.displayName,
+                  description: cached.description !== undefined ? cached.description : row.description,
+                  trancoRank: cached.trancoRank !== undefined ? cached.trancoRank : row.trancoRank,
+                  trancoDate: cached.trancoDate !== undefined ? cached.trancoDate : row.trancoDate,
+                  trancoStatus: cached.trancoRank !== undefined ? ("success" as const) : row.trancoStatus,
+                  country: cached.country !== undefined ? cached.country : row.country,
+                  language: cached.language !== undefined ? cached.language : row.language,
+                  rssUrl: cached.rssUrl !== undefined ? cached.rssUrl : row.rssUrl,
+                  sitemapUrl: cached.sitemapUrl !== undefined ? cached.sitemapUrl : row.sitemapUrl,
+                  newsCategory: cached.newsCategory !== undefined ? cached.newsCategory : row.newsCategory,
+                  sourcetype: cached.sourcetype !== undefined ? cached.sourcetype : row.sourcetype,
+                  status: isSuccess ? ("success" as const) : row.status,
+                  newsStatus: hasNewsSuccess ? ("success" as const) : row.newsStatus,
+                };
+              }
+              return row;
+            });
+            return {
+              ...prev,
+              rows: updatedRows,
+              domainsRows: prev.appMode === "domains" ? updatedRows : prev.domainsRows,
+              sourcesRows: prev.appMode === "sources" ? updatedRows : prev.sourcesRows,
+            };
+          });
+        }).catch((err) => {
+          console.warn("Failed to pre-fetch domain caches:", err);
+        });
+      }
     } catch (err: any) {
       console.error(err);
       setSheetFetchError(err.message || "Failed to fetch spreadsheet. Confirm that the resource is public/viewable.");
@@ -679,6 +778,13 @@ export default function App() {
         }
 
         const { results } = await res.json();
+        
+        // Cache Tranco rankings to DB and local cache
+        await setCachedDomains(results.map((r: any) => ({
+          domain: r.domain,
+          trancoRank: r.rank,
+          trancoDate: r.date,
+        })));
         
         setState((prev) => {
           const updatedRows = prev.rows.map((row) => {
@@ -799,6 +905,14 @@ export default function App() {
         }
 
         const freshResults = data.results as any[];
+        
+        // Cache news publisher check results to DB and local cache
+        await setCachedDomains(freshResults.map((item) => ({
+          domain: item.domain,
+          isNewsPublisher: item.isNewsPublisher,
+          reasoning: item.reasoning,
+        })));
+
         const finalResultsMap: Record<string, any> = {};
         freshResults.forEach((item) => {
           finalResultsMap[String(item.domain).toLowerCase().trim()] = {
@@ -858,53 +972,15 @@ export default function App() {
 
   // Run the batch domain classification using caching and Gemini fallback
   const classifyDomainsBatch = async (rawIndices: number[]) => {
+    const domainsRowsList = state.domainsRows;
     // Only hit pending items: filter out successes!
     const indicesToRun = rawIndices.filter(
-      (idx) => state.rows[idx] && state.rows[idx].status !== "success"
+      (idx) => domainsRowsList[idx] && domainsRowsList[idx].status !== "success"
     );
     if (indicesToRun.length === 0 || state.isClassifying) {
       if (rawIndices.length > 0 && indicesToRun.length === 0) {
         addToast("All selected domains have already been successfully classified!", "info");
       }
-      return;
-    }
-
-    // Optimization: separate into news publishers (or unchecked) and non-news publishers
-    const newsPublishersIndices = indicesToRun.filter((idx) => {
-      const row = state.rows[idx];
-      if (!row) return false;
-      const isNews = row.isNewsPublisher;
-      return !isNews || isNews === "News Publisher" || isNews === "Yes";
-    });
-    const nonNewsPublishersIndices = indicesToRun.filter((idx) => {
-      const row = state.rows[idx];
-      if (!row) return false;
-      const isNews = row.isNewsPublisher;
-      return isNews && isNews !== "News Publisher" && isNews !== "Yes";
-    });
-
-    if (nonNewsPublishersIndices.length > 0) {
-      setState((prev) => {
-        const updatedRows = prev.rows.map((row) => {
-          if (nonNewsPublishersIndices.includes(row.index)) {
-            return {
-              ...row,
-              category: "other" as const,
-              siteName: toTitleCase(row.domain.split('.')[0]),
-              displayName: toTitleCase(row.domain.split('.')[0]),
-              description: "Non-news publisher domain (skipped metadata fetch to save tokens).",
-              status: "success" as const,
-            };
-          }
-          return row;
-        });
-        return { ...prev, rows: updatedRows };
-      });
-      console.log(`Skipped metadata fetch for ${nonNewsPublishersIndices.length} non-news publisher domains to save tokens.`);
-    }
-
-    if (newsPublishersIndices.length === 0) {
-      addToast("Classification complete (all non-news domains skipped to save tokens).", "success");
       return;
     }
 
@@ -915,24 +991,30 @@ export default function App() {
     const signal = domainAbortControllerRef.current.signal;
 
     setState((prev) => {
-      const updatedRows = prev.rows.map((r) =>
-        newsPublishersIndices.includes(r.index) ? { ...r, status: "processing" as const } : r
+      const updatedDomainsRows = prev.domainsRows.map((r) =>
+        indicesToRun.includes(r.index) ? { ...r, status: "processing" as const } : r
       );
-      return { ...prev, rows: updatedRows, isClassifying: true };
+      return {
+        ...prev,
+        domainsRows: updatedDomainsRows,
+        rows: prev.appMode === "domains" ? updatedDomainsRows : prev.rows,
+        isClassifying: true
+      };
     });
 
     let currentChunk: number[] = [];
+    const allProcessedResults: any[] = [];
 
     try {
-      const BATCH_SIZE = 40;
-      for (let b = 0; b < newsPublishersIndices.length; b += BATCH_SIZE) {
+      const BATCH_SIZE = 100;
+      for (let b = 0; b < indicesToRun.length; b += BATCH_SIZE) {
         if (signal.aborted) {
           throw new DOMException("Aborted", "AbortError");
         }
 
-        const chunkIndices = newsPublishersIndices.slice(b, b + BATCH_SIZE);
+        const chunkIndices = indicesToRun.slice(b, b + BATCH_SIZE);
         currentChunk = chunkIndices;
-        const rowsToAnalyze = chunkIndices.map((idx) => state.rows[idx]);
+        const rowsToAnalyze = chunkIndices.map((idx) => domainsRowsList[idx]);
         const domainsToClassify = rowsToAnalyze.map((r) => r.domain);
 
         // 1. Fetch from Domain Cache
@@ -961,13 +1043,21 @@ export default function App() {
 
         // Initialize with cache hits
         hitRows.forEach(({ index, data }) => {
-          finalResultsMap[state.rows[index].domain.toLowerCase().trim()] = {
+          finalResultsMap[domainsRowsList[index].domain.toLowerCase().trim()] = {
             category: data.category,
             isNewsPublisher: data.isNewsPublisher,
             reasoning: data.reasoning + " (Retrieved from Cache)",
             siteName: data.siteName,
             displayName: data.displayName,
             description: data.description,
+            trancoRank: data.trancoRank !== undefined ? data.trancoRank : undefined,
+            trancoDate: data.trancoDate !== undefined ? data.trancoDate : undefined,
+            country: data.country !== undefined ? data.country : undefined,
+            language: data.language !== undefined ? data.language : undefined,
+            rssUrl: data.rssUrl !== undefined ? data.rssUrl : undefined,
+            sitemapUrl: data.sitemapUrl !== undefined ? data.sitemapUrl : undefined,
+            newsCategory: data.newsCategory !== undefined ? data.newsCategory : undefined,
+            sourcetype: data.sourcetype !== undefined ? data.sourcetype : undefined,
             status: "success" as const
           };
         });
@@ -1035,22 +1125,36 @@ export default function App() {
           throw new DOMException("Aborted", "AbortError");
         }
 
+        let processedResultsForBatch: any[] = [];
+
         // Map everything back to UI state incrementally
         setState((prev) => {
-          const updatedRows = prev.rows.map((row) => {
+          const updatedDomainsRows = prev.domainsRows.map((row) => {
             if (!chunkIndices.includes(row.index)) return row;
 
             const match = finalResultsMap[row.domain.toLowerCase().trim()];
             if (match) {
+              const isSuccess = match.category && match.isNewsPublisher;
+              const hasNewsSuccess = match.country && match.language;
               return {
                 ...row,
-                category: match.category,
-                isNewsPublisher: match.isNewsPublisher,
-                reasoning: match.reasoning,
-                siteName: match.siteName,
-                displayName: match.displayName,
-                description: match.description,
-                status: "success" as const,
+                category: match.category !== undefined ? match.category : row.category,
+                isNewsPublisher: match.isNewsPublisher !== undefined ? match.isNewsPublisher : row.isNewsPublisher,
+                reasoning: match.reasoning !== undefined ? match.reasoning : row.reasoning,
+                siteName: match.siteName !== undefined ? match.siteName : row.siteName,
+                displayName: match.displayName !== undefined ? match.displayName : row.displayName,
+                description: match.description !== undefined ? match.description : row.description,
+                trancoRank: match.trancoRank !== undefined ? match.trancoRank : row.trancoRank,
+                trancoDate: match.trancoDate !== undefined ? match.trancoDate : row.trancoDate,
+                trancoStatus: match.trancoRank !== undefined ? ("success" as const) : row.trancoStatus,
+                country: match.country !== undefined ? match.country : row.country,
+                language: match.language !== undefined ? match.language : row.language,
+                rssUrl: match.rssUrl !== undefined ? match.rssUrl : row.rssUrl,
+                sitemapUrl: match.sitemapUrl !== undefined ? match.sitemapUrl : row.sitemapUrl,
+                newsCategory: match.newsCategory !== undefined ? match.newsCategory : row.newsCategory,
+                sourcetype: match.sourcetype !== undefined ? match.sourcetype : row.sourcetype,
+                newsStatus: hasNewsSuccess ? ("success" as const) : row.newsStatus,
+                status: isSuccess ? ("success" as const) : row.status,
               };
             } else {
               return {
@@ -1061,21 +1165,29 @@ export default function App() {
             }
           });
 
-          // Save run history log incrementally
-          const processedResults = updatedRows.filter((r) => chunkIndices.includes(r.index));
-          saveRunHistory(
-            firebaseUser?.uid || "offline_sandbox_bypass_user",
-            firebaseUser?.email || "Guest Sandbox Developer",
-            prev.config.spreadsheetId ? `Google Sheet: ${prev.config.spreadsheetId.slice(0, 8)}` : "Uploaded File",
-            "domains",
-            processedResults
-          );
-
-          return { ...prev, rows: updatedRows };
+          processedResultsForBatch = updatedDomainsRows.filter((r) => chunkIndices.includes(r.index));
+          return {
+            ...prev,
+            domainsRows: updatedDomainsRows,
+            rows: prev.appMode === "domains" ? updatedDomainsRows : prev.rows
+          };
         });
+
+        allProcessedResults.push(...processedResultsForBatch);
 
         // Small yield to let react components paint and avoid API hammering
         await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+
+      // Save complete run history log in single chunk/documents of up to 100
+      if (allProcessedResults.length > 0) {
+        saveRunHistory(
+          firebaseUser?.uid || "offline_sandbox_bypass_user",
+          firebaseUser?.email || "Guest Sandbox Developer",
+          state.config.spreadsheetId ? `Google Sheet: ${state.config.spreadsheetId.slice(0, 8)}` : "Uploaded File",
+          "domains",
+          allProcessedResults
+        );
       }
 
       setState((prev) => ({ ...prev, isClassifying: false }));
@@ -1084,12 +1196,17 @@ export default function App() {
       if (err.name === 'AbortError' || signal.aborted) {
         console.log("Classification aborted by user.");
         setState((prev) => {
-          const updatedRows = prev.rows.map((r) =>
+          const updatedDomainsRows = prev.domainsRows.map((r) =>
             indicesToRun.includes(r.index) && r.status === "processing"
               ? { ...r, status: "pending" as const }
               : r
           );
-          return { ...prev, rows: updatedRows, isClassifying: false };
+          return {
+            ...prev,
+            domainsRows: updatedDomainsRows,
+            rows: prev.appMode === "domains" ? updatedDomainsRows : prev.rows,
+            isClassifying: false
+          };
         });
         return;
       }
@@ -1098,7 +1215,7 @@ export default function App() {
       if (isLimit) {
         const cleanMsg = err.message.replace("API_LIMIT_REACHED: ", "");
         setState((prev) => {
-          const updatedRows = prev.rows.map((r) => {
+          const updatedDomainsRows = prev.domainsRows.map((r) => {
             if (!indicesToRun.includes(r.index)) return r;
             if (currentChunk.includes(r.index)) {
               return { ...r, status: "error" as const, errorMsg: cleanMsg };
@@ -1108,14 +1225,19 @@ export default function App() {
             }
             return r;
           });
-          return { ...prev, rows: updatedRows, isClassifying: false };
+          return {
+            ...prev,
+            domainsRows: updatedDomainsRows,
+            rows: prev.appMode === "domains" ? updatedDomainsRows : prev.rows,
+            isClassifying: false
+          };
         });
         return;
       }
 
       console.error(err);
       setState((prev) => {
-        const updatedRows = prev.rows.map((r) => {
+        const updatedDomainsRows = prev.domainsRows.map((r) => {
           if (!indicesToRun.includes(r.index)) return r;
           if (currentChunk.includes(r.index)) {
             return {
@@ -1129,7 +1251,12 @@ export default function App() {
           }
           return r;
         });
-        return { ...prev, rows: updatedRows, isClassifying: false };
+        return {
+          ...prev,
+          domainsRows: updatedDomainsRows,
+          rows: prev.appMode === "domains" ? updatedDomainsRows : prev.rows,
+          isClassifying: false
+        };
       });
     } finally {
       if (domainAbortControllerRef.current?.signal === signal) {
@@ -1140,9 +1267,10 @@ export default function App() {
 
   // Find news feed elements using caching & AI model query fallback
   const validateNewsSourcesBatch = async (rawIndices: number[]) => {
+    const sourcesRowsList = state.sourcesRows;
     // Only hit pending items: filter out successes!
     const indicesToRun = rawIndices.filter(
-      (idx) => state.rows[idx] && state.rows[idx].newsStatus !== "success"
+      (idx) => sourcesRowsList[idx] && sourcesRowsList[idx].newsStatus !== "success"
     );
     if (indicesToRun.length === 0 || isAnalyzingNews) {
       if (rawIndices.length > 0 && indicesToRun.length === 0) {
@@ -1159,18 +1287,23 @@ export default function App() {
 
     setIsAnalyzingNews(true);
     setState((prev) => {
-      const updatedRows = prev.rows.map((r) =>
+      const updatedSourcesRows = prev.sourcesRows.map((r) =>
         indicesToRun.includes(r.index) ? { ...r, newsStatus: "processing" as const } : r
       );
-      return { ...prev, rows: updatedRows };
+      return {
+        ...prev,
+        sourcesRows: updatedSourcesRows,
+        rows: prev.appMode === "sources" ? updatedSourcesRows : prev.rows
+      };
     });
 
     const isSourcesMode = state.appMode === "sources";
 
     let currentChunk: number[] = [];
+    const allProcessedResults: any[] = [];
 
     try {
-      const BATCH_SIZE = 40;
+      const BATCH_SIZE = 100;
       for (let b = 0; b < indicesToRun.length; b += BATCH_SIZE) {
         if (signal.aborted) {
           throw new DOMException("Aborted", "AbortError");
@@ -1178,7 +1311,7 @@ export default function App() {
 
         const chunkIndices = indicesToRun.slice(b, b + BATCH_SIZE);
         currentChunk = chunkIndices;
-        const chunkRows = chunkIndices.map((idx) => state.rows[idx]);
+        const chunkRows = chunkIndices.map((idx) => sourcesRowsList[idx]);
         const chunkDomains = chunkRows.map((r) => r.domain);
 
         let finalNewsMap: Record<string, any> = {};
@@ -1205,7 +1338,7 @@ export default function App() {
 
         // Add hits to map
         hitRows.forEach(({ index, data }) => {
-          finalNewsMap[state.rows[index].domain.toLowerCase().trim()] = {
+          finalNewsMap[sourcesRowsList[index].domain.toLowerCase().trim()] = {
             country: data.country,
             language: data.language,
             newsCategory: normalizeCategory(data.category || data.newsCategory),
@@ -1275,20 +1408,22 @@ export default function App() {
           throw new DOMException("Aborted", "AbortError");
         }
 
+        let processedResultsForBatch: any[] = [];
+
         // Update React State with final results incrementally
         setState((prev) => {
-          const updatedRows = prev.rows.map((row) => {
+          const updatedSourcesRows = prev.sourcesRows.map((row) => {
             if (!chunkIndices.includes(row.index)) return row;
 
             const match = finalNewsMap[row.domain.toLowerCase().trim()];
             if (match) {
               return {
                 ...row,
-                country: match.country,
-                language: match.language,
+                country: match.country !== undefined && match.country !== null && match.country !== "" ? match.country : row.country,
+                language: match.language !== undefined && match.language !== null && match.language !== "" ? match.language : row.language,
                 rssUrl: match.rssUrl || row.rssUrl,
                 sitemapUrl: match.sitemapUrl || row.sitemapUrl,
-                newsCategory: match.newsCategory,
+                newsCategory: match.newsCategory !== undefined && match.newsCategory !== null && match.newsCategory !== "" ? match.newsCategory : row.newsCategory,
                 sourcetype: match.sourcetype || row.sourcetype,
                 newsStatus: "success" as const,
                 // Mark as news publisher when news analysis succeeds
@@ -1306,21 +1441,29 @@ export default function App() {
             }
           });
 
-          // Save run history log incrementally
-          const processedResults = updatedRows.filter((r) => chunkIndices.includes(r.index));
-          saveRunHistory(
-            firebaseUser?.uid || "offline_sandbox_bypass_user",
-            firebaseUser?.email || "Guest Sandbox Developer",
-            prev.config.spreadsheetId ? `Google Sheet: ${prev.config.spreadsheetId.slice(0, 8)}` : "Uploaded Feed List",
-            isSourcesMode ? "sources" : "domains",
-            processedResults
-          );
-
-          return { ...prev, rows: updatedRows };
+          processedResultsForBatch = updatedSourcesRows.filter((r) => chunkIndices.includes(r.index));
+          return {
+            ...prev,
+            sourcesRows: updatedSourcesRows,
+            rows: prev.appMode === "sources" ? updatedSourcesRows : prev.rows
+          };
         });
+
+        allProcessedResults.push(...processedResultsForBatch);
 
         // Small yield to balance network loads
         await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+
+      // Save complete run history log in single chunk/documents of up to 100
+      if (allProcessedResults.length > 0) {
+        saveRunHistory(
+          firebaseUser?.uid || "offline_sandbox_bypass_user",
+          firebaseUser?.email || "Guest Sandbox Developer",
+          state.config.spreadsheetId ? `Google Sheet: ${state.config.spreadsheetId.slice(0, 8)}` : "Uploaded Feed List",
+          isSourcesMode ? "sources" : "domains",
+          allProcessedResults
+        );
       }
 
       setIsAnalyzingNews(false);
@@ -1329,12 +1472,16 @@ export default function App() {
       if (err.name === 'AbortError' || signal.aborted) {
         console.log("Sources analysis aborted by user.");
         setState((prev) => {
-          const updatedRows = prev.rows.map((r) =>
+          const updatedSourcesRows = prev.sourcesRows.map((r) =>
             indicesToRun.includes(r.index) && r.newsStatus === "processing"
               ? { ...r, newsStatus: "pending" as const }
               : r
           );
-          return { ...prev, rows: updatedRows };
+          return {
+            ...prev,
+            sourcesRows: updatedSourcesRows,
+            rows: prev.appMode === "sources" ? updatedSourcesRows : prev.rows
+          };
         });
         setIsAnalyzingNews(false);
         return;
@@ -1344,7 +1491,7 @@ export default function App() {
       if (isLimit) {
         const cleanMsg = err.message.replace("API_LIMIT_REACHED: ", "");
         setState((prev) => {
-          const updatedRows = prev.rows.map((r) => {
+          const updatedSourcesRows = prev.sourcesRows.map((r) => {
             if (!indicesToRun.includes(r.index)) return r;
             if (currentChunk.includes(r.index)) {
               return { ...r, newsStatus: "error" as const, newsErrorMsg: cleanMsg };
@@ -1354,7 +1501,11 @@ export default function App() {
             }
             return r;
           });
-          return { ...prev, rows: updatedRows };
+          return {
+            ...prev,
+            sourcesRows: updatedSourcesRows,
+            rows: prev.appMode === "sources" ? updatedSourcesRows : prev.rows
+          };
         });
         setIsAnalyzingNews(false);
         return;
@@ -1362,7 +1513,7 @@ export default function App() {
 
       console.error(err);
       setState((prev) => {
-        const updatedRows = prev.rows.map((r) => {
+        const updatedSourcesRows = prev.sourcesRows.map((r) => {
           if (!indicesToRun.includes(r.index)) return r;
           if (currentChunk.includes(r.index)) {
             return {
@@ -1376,7 +1527,11 @@ export default function App() {
           }
           return r;
         });
-        return { ...prev, rows: updatedRows };
+        return {
+          ...prev,
+          sourcesRows: updatedSourcesRows,
+          rows: prev.appMode === "sources" ? updatedSourcesRows : prev.rows
+        };
       });
       setIsAnalyzingNews(false);
     } finally {
@@ -1423,7 +1578,7 @@ export default function App() {
       let newRows = mode === "domains" ? nextDomainsRows : nextSourcesRows;
 
       const updatedRows = newRows.map((row) => {
-        const rawValue = String(row.originalValues[newDomainCol] || "").trim();
+        const rawValue = String((row.originalValues && row.originalValues[newDomainCol]) || row.domain || row.d_url || "").trim();
         let cleanDomain = rawValue;
         if (mode === "domains") {
           cleanDomain = rawValue
@@ -1432,7 +1587,7 @@ export default function App() {
             .split("/")[0]
             .split("?")[0];
         } else {
-          cleanDomain = rawValue.replace(/^(https?:\/\/)?(www\.)?/, "");
+          cleanDomain = rawValue;
         }
         return {
           ...row,
@@ -1450,11 +1605,11 @@ export default function App() {
         domainsConfig: nextDomainsConfig,
         domainsHeaders: nextDomainsHeaders,
         domainsDomainColumnIndex: nextDomainsDomainColumnIndex,
-        domainsRows: currentMode === "domains" ? updatedRows : nextDomainsRows,
+        domainsRows: mode === "domains" ? updatedRows : nextDomainsRows,
         sourcesConfig: nextSourcesConfig,
         sourcesHeaders: nextSourcesHeaders,
         sourcesDomainColumnIndex: nextSourcesDomainColumnIndex,
-        sourcesRows: currentMode === "sources" ? updatedRows : nextSourcesRows,
+        sourcesRows: mode === "sources" ? updatedRows : nextSourcesRows,
         filterCategory: "",
         filterNews: "",
         searchTerm: "",
@@ -1512,18 +1667,25 @@ export default function App() {
     setIsAnalyzingNews(false);
     setIsFetchingTranco(false);
     setState((prev) => {
-      const sanitizedRows = prev.rows.map((r) => ({
+      const sanitizeRow = (r: any) => ({
         ...r,
         status: r.status === "processing" ? "pending" : r.status,
         newsStatus: r.newsStatus === "processing" ? "pending" : r.newsStatus,
         trancoStatus: r.trancoStatus === "processing" ? undefined : r.trancoStatus,
         newsPublisherStatus: r.newsPublisherStatus === "processing" ? "pending" : r.newsPublisherStatus,
-      }));
+      });
+
+      const sanitizedRows = prev.rows.map(sanitizeRow);
+      const sanitizedDomainsRows = (prev.domainsRows || []).map(sanitizeRow);
+      const sanitizedSourcesRows = (prev.sourcesRows || []).map(sanitizeRow);
+
       return {
         ...prev,
         isClassifying: false,
         isCheckingNewsPublisher: false,
         rows: sanitizedRows,
+        domainsRows: sanitizedDomainsRows,
+        sourcesRows: sanitizedSourcesRows,
       };
     });
 
@@ -1538,10 +1700,9 @@ export default function App() {
     localStorage.removeItem("publisher_autosave_session_guest");
     localStorage.removeItem("publisher_autosave_session");
     
-    // Wipe all local storage caches related to domains, sources, and feeds
+        // Wipe all local storage caches related to domains, sources, and feeds
     localStorage.removeItem("publisher_cache_domains");
     localStorage.removeItem("publisher_cache_sources");
-    localStorage.removeItem("publisher_cache_newsfeeds");
 
     setState((prev) => ({
       ...prev,
@@ -1585,7 +1746,6 @@ export default function App() {
     // Clear local storage caches so the next run does not hit the cache
     localStorage.removeItem("publisher_cache_domains");
     localStorage.removeItem("publisher_cache_sources");
-    localStorage.removeItem("publisher_cache_newsfeeds");
 
     const clearRowData = (row: any) => ({
       ...row,
@@ -1742,9 +1902,7 @@ export default function App() {
     addToast("Integration Access Token Configured!", "success");
     // Auto re-fetch sheet with custom manual token
     fetchSpreadsheet(state.config.spreadsheetId, state.config.gid, manualToken);
-  };
-
-  // export results back to the Google Sheet (via Google spreadsheets update API)
+  };  // export results back to the Google Sheet (via Google spreadsheets update API)
   const handleExportToGoogleSheet = async () => {
     setSheetDebugLogs([]); // Clear previous logs
     const addLog = (message: string) => {
@@ -1754,8 +1912,6 @@ export default function App() {
     };
 
     addLog("Starting Google Sheets export process (User clicked Save back to Sheets)...");
-
-    addLog("Starting Google Sheets export process...");
     addLog(`Target Spreadsheet ID: "${state.config.spreadsheetId}"`);
     addLog(`Target GID: "${state.config.gid}"`);
 
@@ -1805,7 +1961,6 @@ export default function App() {
       const escapedSheetName = `'${finalSheetName.replace(/'/g, "''")}'`;
 
       // 2. Look up header names in spreadsheet values to find where to write results
-      // We read the first row
       const headerUrl = `https://sheets.googleapis.com/v4/spreadsheets/${state.config.spreadsheetId}/values/${encodeURIComponent(
         `${escapedSheetName}!A1:Z1`
       )}`;
@@ -1830,150 +1985,222 @@ export default function App() {
       const currentHeaders: string[] = readHeadersData.values?.[0] || [];
       addLog(`Spreadsheet headers read successfully. Found ${currentHeaders.length} existing columns: "${currentHeaders.join('", "')}"`);
 
-      // Find indices for target columns if they exist
-      let siteNameIdx = currentHeaders.findIndex((h) => h.toLowerCase() === "site name" || h.toLowerCase() === "sitename");
-      let displayNameIdx = currentHeaders.findIndex((h) => h.toLowerCase() === "display name" || h.toLowerCase() === "displayname");
-      let catIdx = currentHeaders.findIndex((h) => h.toLowerCase() === "category" || h.toLowerCase() === "news category" || h.toLowerCase() === "sub-category");
-      let newsIdx = currentHeaders.findIndex((h) => h.toLowerCase() === "news publisher");
-      let domainDescIdx = currentHeaders.findIndex((h) => h.toLowerCase() === "domain description" || h.toLowerCase() === "description" || h.toLowerCase() === "ai domain description" || h.toLowerCase() === "ai description / reasoning");
-      let trancoIdx = currentHeaders.findIndex((h) => h.toLowerCase() === "tranco rank" || h.toLowerCase() === "tranco traffic rank" || h.toLowerCase() === "priority");
-      let reasonIdx = currentHeaders.findIndex((h) => h.toLowerCase() === "reasoning" || h.toLowerCase() === "ai reasoning" || h.toLowerCase() === "analysis reasoning");
-      let countryIdx = currentHeaders.findIndex((h) => h.toLowerCase() === "country");
-      let langIdx = currentHeaders.findIndex((h) => h.toLowerCase() === "language" || h.toLowerCase() === "lang");
-
-      addLog(`Detected Target Columns indices (0-indexed):`);
-      addLog(` - Site Name Index: ${siteNameIdx !== -1 ? siteNameIdx : "NOT FOUND (Will append)"}`);
-      addLog(` - Display Name Index: ${displayNameIdx !== -1 ? displayNameIdx : "NOT FOUND (Will append)"}`);
-      addLog(` - Category Column Index: ${catIdx !== -1 ? catIdx : "NOT FOUND (Will append)"}`);
-      addLog(` - News Publisher Column Index: ${newsIdx !== -1 ? newsIdx : "NOT FOUND (Will append)"}`);
-      addLog(` - Domain Description Column Index: ${domainDescIdx !== -1 ? domainDescIdx : "NOT FOUND (Will append)"}`);
-      addLog(` - Tranco Traffic Rank Column Index: ${trancoIdx !== -1 ? trancoIdx : "NOT FOUND (Will append)"}`);
-      addLog(` - AI Reasoning Column Index: ${reasonIdx !== -1 ? reasonIdx : "NOT FOUND (Will append)"}`);
-      addLog(` - Country Column Index: ${countryIdx !== -1 ? countryIdx : "NOT FOUND (Will append)"}`);
-      addLog(` - Language Column Index: ${langIdx !== -1 ? langIdx : "NOT FOUND (Will append)"}`);
-
       const totalOriginalCols = currentHeaders.length;
       const maxRows = state.rows.length + 1; // including header
+
+      const isSources = state.appMode === "sources";
+
+      // 3. Define target columns we want to export based on current appMode
+      const exportSchema = isSources 
+        ? [
+            {
+              id: "domain",
+              name: "Source URL (fULL URL)",
+              matchFn: (h: string) => ["source url (full url)", "source url (direct feed)", "source url", "feed url", "domain"].includes(h.toLowerCase()),
+              valFn: (r: DomainRow) => r.domain || ""
+            },
+            {
+              id: "newsStatus",
+              name: "Status",
+              matchFn: (h: string) => ["status", "newsstatus"].includes(h.toLowerCase()),
+              valFn: (r: DomainRow) => r.newsStatus || "pending"
+            },
+            {
+              id: "country",
+              name: "Target Country",
+              matchFn: (h: string) => ["target country", "country", "geo"].includes(h.toLowerCase()),
+              valFn: (r: DomainRow) => r.country || ""
+            },
+            {
+              id: "language",
+              name: "Language",
+              matchFn: (h: string) => ["language", "lang"].includes(h.toLowerCase()),
+              valFn: (r: DomainRow) => r.language || ""
+            },
+            {
+              id: "newsCategory",
+              name: "News Category",
+              matchFn: (h: string) => ["news category", "source category", "news_category"].includes(h.toLowerCase()),
+              valFn: (r: DomainRow) => r.newsCategory || ""
+            },
+            {
+              id: "sourcetype",
+              name: "Source Type",
+              matchFn: (h: string) => ["source type", "sourcetype", "type"].includes(h.toLowerCase()),
+              valFn: (r: DomainRow) => r.sourcetype || ""
+            }
+          ]
+        : [
+            {
+              id: "siteName",
+              name: "Name",
+              matchFn: (h: string) => ["name", "site name", "sitename"].includes(h.toLowerCase()),
+              valFn: (r: DomainRow) => r.siteName || ""
+            },
+            {
+              id: "displayName",
+              name: "Display_Name",
+              matchFn: (h: string) => ["display_name", "display name", "displayname"].includes(h.toLowerCase()),
+              valFn: (r: DomainRow) => r.displayName || ""
+            },
+            {
+              id: "description",
+              name: "Detailed Brand Identity & Description",
+              matchFn: (h: string) => ["detailed brand identity & description", "detailed brand identity and description", "description", "domain description"].includes(h.toLowerCase()),
+              valFn: (r: DomainRow) => r.description || ""
+            },
+            {
+              id: "d_url",
+              name: "Domain(url)",
+              matchFn: (h: string) => ["domain(url)", "d_url", "raw url", "url"].includes(h.toLowerCase()),
+              valFn: (r: DomainRow) => r.d_url || r.domain || ""
+            },
+            {
+              id: "domain",
+              name: "Base Domain",
+              matchFn: (h: string) => ["base domain", "domain", "domain url"].includes(h.toLowerCase()),
+              valFn: (r: DomainRow) => r.domain || ""
+            },
+            {
+              id: "status",
+              name: "Status",
+              matchFn: (h: string) => ["status", "analysis status"].includes(h.toLowerCase()),
+              valFn: (r: DomainRow) => r.status || "pending"
+            },
+            {
+              id: "trancoRank",
+              name: "Tranco Traffic Rank",
+              matchFn: (h: string) => ["tranco traffic rank", "tranco priority", "tranco rank", "priority", "tranco"].includes(h.toLowerCase()),
+              valFn: (r: DomainRow) => r.trancoRank !== undefined && r.trancoRank !== null ? r.trancoRank.toString() : "-"
+            },
+            {
+              id: "category",
+              name: "Category",
+              matchFn: (h: string) => ["category", "domain category"].includes(h.toLowerCase()),
+              valFn: (r: DomainRow) => r.category || ""
+            },
+            {
+              id: "pagePurpose",
+              name: "Page Purpose",
+              matchFn: (h: string) => ["page purpose", "purpose", "news publisher", "is newspublisher"].includes(h.toLowerCase()),
+              valFn: (r: DomainRow) => r.isNewsPublisher || ""
+            },
+            {
+              id: "reasoning",
+              name: "Ai Reasoning",
+              matchFn: (h: string) => ["ai reasoning", "reasoning"].includes(h.toLowerCase()),
+              valFn: (r: DomainRow) => r.reasoning || ""
+            }
+          ];
+
+      addLog(`Unifying export column mappings for non-destructive "${state.appMode}" mode...`);
+
+      // 4. Filter out headers belonging to the OTHER mode to keep them separate
+      const otherModeKeys = isSources
+        ? [
+            "name", "site name", "sitename",
+            "display_name", "display name", "displayname",
+            "detailed brand identity & description", "detailed brand identity and description", "description", "domain description",
+            "domain(url)", "d_url", "raw url", "url",
+            "base domain", "domain url",
+            "tranco traffic rank", "tranco priority", "tranco rank", "priority", "tranco",
+            "category",
+            "page purpose", "purpose", "news publisher", "is newspublisher",
+            "ai reasoning", "reasoning"
+          ]
+        : [
+            "source url (direct feed)",
+            "source url (full url)",
+            "source url",
+            "target country",
+            "language",
+            "news category",
+            "source type"
+          ];
+
+      const indicesToKeep: number[] = [];
+      const filteredHeaders: string[] = [];
+      
+      currentHeaders.forEach((h, idx) => {
+        const lower = h.toLowerCase().trim();
+        if (otherModeKeys.includes(lower)) {
+          addLog(`Excluding extra column belonging to other classification mode: "${h}" at index ${idx}`);
+        } else {
+          indicesToKeep.push(idx);
+          filteredHeaders.push(h);
+        }
+      });
+
+      const totalFilteredCols = filteredHeaders.length;
+
+      let nextAvailableAppendOffset = 0;
+      const mappedCols = exportSchema.map((col) => {
+        const foundIndex = filteredHeaders.findIndex(col.matchFn);
+        if (foundIndex !== -1) {
+          addLog(` - Found existing column for "${col.name}" at index ${foundIndex}`);
+          return { ...col, finalIndex: foundIndex, isAppend: false };
+        } else {
+          const finalIndex = totalFilteredCols + nextAvailableAppendOffset;
+          nextAvailableAppendOffset++;
+          addLog(` - Did not find existing column for "${col.name}". Will append at index ${finalIndex}`);
+          return { ...col, finalIndex, isAppend: true };
+        }
+      });
+
+      let maxColIdx = Math.max(totalFilteredCols - 1, ...mappedCols.map(c => c.finalIndex));
+      // Overwrite any trailing extra columns from the original spreadsheet with empty strings to clear them
+      maxColIdx = Math.max(maxColIdx, totalOriginalCols - 1);
+
+      // Factor in original values lengths in case some rows are longer than headers (mapped to kept indices)
+      for (const rowObj of state.rows) {
+        if (rowObj && Array.isArray(rowObj.originalValues)) {
+          const maxKeptOriginalIdx = indicesToKeep.length - 1;
+          maxColIdx = Math.max(maxColIdx, maxKeptOriginalIdx);
+        }
+      }
+
+      const endLetter = getColumnLetter(maxColIdx + 1);
+      const writeRange = `${escapedSheetName}!A1:${endLetter}${maxRows}`;
+      addLog(`Calculated target non-destructive write range: "${writeRange}" (A1 through ${endLetter}${maxRows})`);
+
       const dataMatrix: string[][] = Array.from({ length: maxRows }, () => []);
 
-      let writeRange = "";
-
-      if (state.appMode === "sources") {
-        addLog("Sources Mode detected: Writing exactly [source_url, language, country, category, sourcetype] columns back to the sheet.");
-        const columnsToExport = ["source_url", "language", "country", "category", "sourcetype"];
-        const endLetter = getColumnLetter(columnsToExport.length);
-        writeRange = `${escapedSheetName}!A1:${endLetter}${maxRows}`;
-        addLog(`Calculated target sources range span: "${writeRange}" (Columns A through ${endLetter})`);
-
-        // Populate header
-        dataMatrix[0] = columnsToExport;
-
-        // Populate rows
-        let countExported = 0;
-        for (let r = 0; r < state.rows.length; r++) {
-          const rowObj = state.rows[r];
-          dataMatrix[r + 1] = [
-            rowObj.domain,
-            rowObj.language || "",
-            rowObj.country || "",
-            rowObj.newsCategory || "",
-            rowObj.sourcetype || ""
-          ];
-          countExported++;
-        }
-        addLog(`Prepared source classification matrix for ${countExported} records.`);
-      } else if (
-        siteNameIdx !== -1 ||
-        displayNameIdx !== -1 ||
-        catIdx !== -1 ||
-        newsIdx !== -1 ||
-        domainDescIdx !== -1 ||
-        trancoIdx !== -1 ||
-        reasonIdx !== -1 ||
-        countryIdx !== -1 ||
-        langIdx !== -1
-      ) {
-        addLog("CASE detected: At least one target column already exists. Writing directly to specific pre-defined columns standard offset rules.");
-        const writeCols = [
-          { name: "Site Name", curIdx: siteNameIdx, fallbackOffset: 0, valFn: (r: DomainRow) => r.siteName || "" },
-          { name: "Display Name", curIdx: displayNameIdx, fallbackOffset: 1, valFn: (r: DomainRow) => r.displayName || "" },
-          { name: "Category", curIdx: catIdx, fallbackOffset: 2, valFn: (r: DomainRow) => r.newsCategory || r.category || "" },
-          { name: "News Publisher", curIdx: newsIdx, fallbackOffset: 3, valFn: (r: DomainRow) => r.isNewsPublisher || "" },
-          { name: "Domain Description", curIdx: domainDescIdx, fallbackOffset: 4, valFn: (r: DomainRow) => r.description || "" },
-          { name: "Tranco Traffic Rank", curIdx: trancoIdx, fallbackOffset: 5, valFn: (r: DomainRow) => r.trancoRank !== undefined && r.trancoRank !== null ? r.trancoRank.toString() : "-" },
-          { name: "AI Reasoning", curIdx: reasonIdx, fallbackOffset: 6, valFn: (r: DomainRow) => r.reasoning || "" },
-          { name: "Country", curIdx: countryIdx, fallbackOffset: 7, valFn: (r: DomainRow) => r.country || "" },
-          { name: "Language", curIdx: langIdx, fallbackOffset: 8, valFn: (r: DomainRow) => r.language || "" },
-        ];
-
-        const mappedCols = writeCols.map((col) => {
-          const finalIndex = col.curIdx !== -1 ? col.curIdx : totalOriginalCols + col.fallbackOffset;
-          return { ...col, finalIndex };
-        });
-
-        const minCol = Math.min(...mappedCols.map((c) => c.finalIndex));
-        const maxCol = Math.max(...mappedCols.map((c) => c.finalIndex));
-
-        const startLetter = getColumnLetter(minCol + 1);
-        const endLetter = getColumnLetter(maxCol + 1);
-        writeRange = `${escapedSheetName}!${startLetter}1:${endLetter}${maxRows}`;
-        addLog(`Calculated target update range span: "${writeRange}" (Columns ${startLetter} through ${endLetter})`);
-
-        // Populate Headers
-        mappedCols.forEach((col) => {
-          dataMatrix[0][col.finalIndex - minCol] = col.name;
-        });
-
-        // Populate Rows
-        let countWritten = 0;
-        for (let r = 0; r < state.rows.length; r++) {
-          const rowObj = state.rows[r];
-          mappedCols.forEach((col) => {
-            dataMatrix[r + 1][col.finalIndex - minCol] = col.valFn(rowObj);
-          });
-          countWritten++;
-        }
-        addLog(`Prepared write matrix cells for ${countWritten} records.`);
-      } else {
-        addLog("CASE detected: None of the target columns exist. Appending 9 brand-new columns to the end of your original sheet...");
-        const columnsToAppend = [
-          "Site Name",
-          "Display Name",
-          "Category", 
-          "News Publisher", 
-          "Domain Description",
-          "Tranco Traffic Rank",
-          "AI Reasoning",
-          "Country",
-          "Language"
-        ];
-        const startLetter = getColumnLetter(totalOriginalCols + 1);
-        const endLetter = getColumnLetter(totalOriginalCols + columnsToAppend.length);
-        writeRange = `${escapedSheetName}!${startLetter}1:${endLetter}${maxRows}`;
-        addLog(`Calculated target append range span: "${writeRange}" (Columns ${startLetter} through ${endLetter})`);
-
-        // Header
-        dataMatrix[0] = columnsToAppend;
-
-        // Body rows matching
-        let countAppended = 0;
-        for (let r = 0; r < state.rows.length; r++) {
-          const rowObj = state.rows[r];
-          dataMatrix[r + 1] = [
-            rowObj.siteName || "",
-            rowObj.displayName || "",
-            rowObj.newsCategory || rowObj.category || "", 
-            rowObj.isNewsPublisher || "", 
-            rowObj.description || "",
-            rowObj.trancoRank !== undefined && rowObj.trancoRank !== null ? rowObj.trancoRank.toString() : "-",
-            rowObj.reasoning || "",
-            rowObj.country || "",
-            rowObj.language || ""
-          ];
-          countAppended++;
-        }
-        addLog(`Prepared append matrix for ${countAppended} records under 9 new headers.`);
+      // 1. Prepare Header Row (dataMatrix[0])
+      const headerRow: string[] = [...filteredHeaders];
+      while (headerRow.length <= maxColIdx) {
+        headerRow.push("");
       }
+      mappedCols.forEach((col) => {
+        headerRow[col.finalIndex] = col.name;
+      });
+      if (headerRow.length > maxColIdx + 1) {
+        headerRow.length = maxColIdx + 1;
+      }
+      dataMatrix[0] = headerRow;
+
+      // 2. Prepare Data Rows (dataMatrix[r + 1])
+      let countExported = 0;
+      for (let r = 0; r < state.rows.length; r++) {
+        const rowObj = state.rows[r];
+        const originalRowVals = Array.isArray(rowObj.originalValues) ? [...rowObj.originalValues] : [];
+        const keptRowVals = indicesToKeep.map(idx => originalRowVals[idx] !== undefined && originalRowVals[idx] !== null ? originalRowVals[idx] : "");
+        const dataRow: string[] = keptRowVals.map(v => String(v));
+        
+        while (dataRow.length <= maxColIdx) {
+          dataRow.push("");
+        }
+        
+        mappedCols.forEach((col) => {
+          dataRow[col.finalIndex] = col.valFn(rowObj);
+        });
+        
+        if (dataRow.length > maxColIdx + 1) {
+          dataRow.length = maxColIdx + 1;
+        }
+        dataMatrix[r + 1] = dataRow;
+        countExported++;
+      }
+      addLog(`Prepared fully integrated matrix for ${countExported} records. Ready to send non-destructive update payload.`);
 
       // Execute PUT back to Google Sheets range
       const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${state.config.spreadsheetId}/values/${encodeURIComponent(
@@ -2032,13 +2259,21 @@ export default function App() {
   const handleDownloadCSV = () => {
     let csvContent = "";
     if (state.appMode === "sources") {
-      const headersToDownload = ["source_url", "language", "country", "category", "sourcetype"];
+      const headersToDownload = [
+        "Source URL (Direct Feed)",
+        "Status",
+        "Target Country",
+        "Language",
+        "News Category",
+        "Source Type"
+      ];
       csvContent += headersToDownload.map((h) => `"${h.replace(/"/g, '""')}"`).join(",") + "\n";
       for (const row of state.rows) {
         const rowParts = [
           `"${(row.domain || "").replace(/"/g, '""')}"`,
-          `"${(row.language || "").replace(/"/g, '""')}"`,
+          `"${(row.newsStatus || "pending").replace(/"/g, '""')}"`,
           `"${(row.country || "").replace(/"/g, '""')}"`,
+          `"${(row.language || "").replace(/"/g, '""')}"`,
           `"${(row.newsCategory || "").replace(/"/g, '""')}"`,
           `"${(row.sourcetype || "").replace(/"/g, '""')}"`,
         ];
@@ -2047,38 +2282,34 @@ export default function App() {
     } else {
       // Header
       const modifiedHeaders = [
-        ...state.headers, 
-        "Site Name",
-        "Display Name",
-        "Category", 
-        "News Publisher", 
-        "Domain Description",
+        "Name",
+        "Display_Name",
+        "Detailed Brand Identity & Description",
+        "Domain(url)",
+        "Base Domain",
+        "Status",
         "Tranco Traffic Rank",
-        "AI Reasoning",
-        "Country",
-        "Language",
-        "RSS URL",
-        "Sitemap URL"
+        "Category",
+        "Page Purpose",
+        "Ai Reasoning"
       ];
       csvContent += modifiedHeaders.map((h) => `"${h.replace(/"/g, '""')}"`).join(",") + "\n";
 
       // Rows
       for (const row of state.rows) {
-        const originalParts = row.originalValues.map((v) => `"${v.replace(/"/g, '""')}"`);
         const resultsParts = [
           `"${(row.siteName || "").replace(/"/g, '""')}"`,
           `"${(row.displayName || "").replace(/"/g, '""')}"`,
-          `"${(row.newsCategory || row.category || "").replace(/"/g, '""')}"`,
-          `"${(row.isNewsPublisher || "").replace(/"/g, '""')}"`,
           `"${(row.description || "").replace(/"/g, '""')}"`,
+          `"${(row.d_url || row.domain || "").replace(/"/g, '""')}"`,
+          `"${(row.domain || "").replace(/"/g, '""')}"`,
+          `"${(row.status || "pending").replace(/"/g, '""')}"`,
           `"${(row.trancoRank !== undefined && row.trancoRank !== null ? row.trancoRank.toString() : "-").replace(/"/g, '""')}"`,
+          `"${(row.category || "").replace(/"/g, '""')}"`,
+          `"${(row.isNewsPublisher || "").replace(/"/g, '""')}"`,
           `"${(row.reasoning || "").replace(/"/g, '""')}"`,
-          `"${(row.country || "").replace(/"/g, '""')}"`,
-          `"${(row.language || "").replace(/"/g, '""')}"`,
-          `"${(row.rssUrl || "").replace(/"/g, '""')}"`,
-          `"${(row.sitemapUrl || "").replace(/"/g, '""')}"`,
         ];
-        csvContent += [...originalParts, ...resultsParts].join(",") + "\n";
+        csvContent += resultsParts.join(",") + "\n";
       }
     }
 
@@ -2086,7 +2317,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `classified_domains_${state.config.spreadsheetId ? state.config.spreadsheetId.slice(0, 6) : "export"}.csv`);
+    link.setAttribute("download", `classified_${state.appMode === "sources" ? "sources" : "domains"}_${state.config.spreadsheetId ? state.config.spreadsheetId.slice(0, 6) : "export"}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -2190,11 +2421,19 @@ export default function App() {
                   {sheetFetchError}
                 </p>
                 <div className="mt-3 flex items-center gap-2">
+                  {(sheetFetchError.toLowerCase().includes("expired") || sheetFetchError.toLowerCase().includes("401") || sheetFetchError.toLowerCase().includes("auth") || sheetFetchError.toLowerCase().includes("token")) && (
+                    <button
+                      onClick={handleConnectGoogle}
+                      className="px-2.5 py-1 text-[10px] font-bold bg-indigo-600 hover:bg-indigo-750 text-white rounded-lg transition-colors cursor-pointer"
+                    >
+                      Connect Google Sheets
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       setShowTokenInputModal(true);
                     }}
-                    className="px-2.5 py-1 text-[10px] font-bold bg-amber-600 hover:bg-amber-700 text-white rounded transition-colors"
+                    className="px-2.5 py-1 text-[10px] font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-lg transition-colors cursor-pointer"
                   >
                     Authenticate / Paste Token
                   </button>
@@ -2202,7 +2441,7 @@ export default function App() {
                     onClick={() => {
                       fetchSpreadsheet(state.config.spreadsheetId, state.config.gid);
                     }}
-                    className="px-2.5 py-1 text-[10px] font-semibold border border-amber-300 text-amber-800 rounded bg-white hover:bg-amber-100 transition-colors"
+                    className="px-2.5 py-1 text-[10px] font-semibold border border-amber-300 text-amber-800 rounded-lg bg-white hover:bg-amber-100 transition-colors cursor-pointer"
                   >
                     Retry Fetch
                   </button>
@@ -2264,6 +2503,16 @@ export default function App() {
                   {sheetUpdateResult.type === "success" ? "Google Sheet Export Successful" : "Google Sheet Export Failed"}
                 </p>
                 <p className="text-[11px] text-gray-500 mt-0.5">{sheetUpdateResult.msg}</p>
+                {sheetUpdateResult.type === "error" && (sheetUpdateResult.msg.toLowerCase().includes("401") || sheetUpdateResult.msg.toLowerCase().includes("auth") || sheetUpdateResult.msg.toLowerCase().includes("token") || sheetUpdateResult.msg.toLowerCase().includes("unauthorized") || sheetUpdateResult.msg.toLowerCase().includes("permissions")) && (
+                  <div className="mt-3">
+                    <button
+                      onClick={handleConnectGoogle}
+                      className="px-2.5 py-1 text-[10px] font-bold bg-indigo-600 hover:bg-indigo-750 text-white rounded-lg transition-colors cursor-pointer"
+                    >
+                      Connect Google Sheets
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
             <button
@@ -2374,7 +2623,7 @@ export default function App() {
 
               <button
                 onClick={handleExportToGoogleSheet}
-                disabled={isUpdatingSheet || classifiedCount === 0}
+                disabled={isUpdatingSheet || state.rows.length === 0}
                 className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-white text-xs font-semibold rounded-xl transition-all duration-300 shadow-xs focus:outline-hidden focus:ring-2 disabled:opacity-45 disabled:cursor-not-allowed ${
                   isUpdatingSheet
                     ? "bg-amber-500 hover:bg-amber-600 focus:ring-amber-300 animate-pulse"

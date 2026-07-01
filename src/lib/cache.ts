@@ -145,30 +145,26 @@ export async function getCachedDomains(domains: string[]): Promise<Record<string
 }
 
 // Set domain classification results in the cache
-export async function setCachedDomains(results: Array<{ 
-  domain: string; 
-  category: string; 
-  isNewsPublisher: string; 
-  reasoning: string;
-  siteName?: string;
-  displayName?: string;
-  description?: string;
-}>) {
+export async function setCachedDomains(results: Array<Partial<any> & { domain: string }>) {
   // 1. Sync to local storage
   const localData: Record<string, any> = {};
+  const currentLocal = getLocalCache("domains");
   results.forEach(item => {
     const clean = item.domain.toLowerCase().trim();
     if (clean) {
+      const existing = currentLocal[clean] || {};
+      const cleaned = cleanForFirestore(item);
+      
       localData[clean] = {
+        ...existing,
+        ...cleaned,
         domain: clean,
-        category: item.category,
-        isNewsPublisher: item.isNewsPublisher,
-        reasoning: item.reasoning,
-        siteName: item.siteName || null,
-        displayName: item.displayName || null,
-        description: item.description || null,
-        createdAt: new Date().toISOString()
+        updatedAt: new Date().toISOString()
       };
+      
+      if (!existing.createdAt && !localData[clean].createdAt) {
+        localData[clean].createdAt = new Date().toISOString();
+      }
     }
   });
   saveLocalCache("domains", localData);
@@ -181,16 +177,25 @@ export async function setCachedDomains(results: Array<{
       if (!docClean) return;
       const docId = getSafeDocId(docClean);
       const ref = doc(db, "domain_cache", docId);
-      batch.set(ref, cleanForFirestore({
+      
+      const cleaned = cleanForFirestore(item);
+      const payload: Record<string, any> = {
+        ...cleaned,
         domain: docClean,
-        category: item.category,
-        isNewsPublisher: item.isNewsPublisher,
-        reasoning: item.reasoning,
-        siteName: item.siteName || null,
-        displayName: item.displayName || null,
-        description: item.description || null,
-        createdAt: serverTimestamp()
-      }), { merge: true });
+        updatedAt: serverTimestamp()
+      };
+      
+      // Filter out any temporary UI status fields from Firestore doc
+      delete payload.index;
+      delete payload.originalValues;
+      delete payload.status;
+      delete payload.errorMsg;
+      delete payload.newsStatus;
+      delete payload.newsErrorMsg;
+      delete payload.newsPublisherStatus;
+      delete payload.trancoStatus;
+
+      batch.set(ref, payload, { merge: true });
     });
     await batch.commit();
   } catch (err: any) {
@@ -245,17 +250,21 @@ export async function getCachedSources(sources: string[]): Promise<Record<string
 export async function setCachedSources(results: Array<{ source: string; country: string; language: string; category: string; sourcetype?: string }>) {
   // 1. Save locally
   const localData: Record<string, any> = {};
+  const currentLocal = getLocalCache("sources");
   results.forEach(item => {
     const clean = item.source.toLowerCase().trim();
     if (clean) {
+      const existing = currentLocal[clean] || {};
+      const cleaned = cleanForFirestore(item);
       localData[clean] = {
+        ...existing,
+        ...cleaned,
         source: item.source,
-        country: item.country,
-        language: item.language,
-        category: item.category,
-        sourcetype: item.sourcetype || null,
-        createdAt: new Date().toISOString()
+        updatedAt: new Date().toISOString()
       };
+      if (!existing.createdAt && !localData[clean].createdAt) {
+        localData[clean].createdAt = new Date().toISOString();
+      }
     }
   });
   saveLocalCache("sources", localData);
@@ -268,14 +277,15 @@ export async function setCachedSources(results: Array<{ source: string; country:
       if (!srcClean) return;
       const docId = getSourceDocId(srcClean);
       const ref = doc(db, "source_cache", docId);
-      batch.set(ref, cleanForFirestore({
+      
+      const cleaned = cleanForFirestore(item);
+      const payload: Record<string, any> = {
+        ...cleaned,
         source: srcClean,
-        country: item.country,
-        language: item.language,
-        category: item.category,
-        sourcetype: item.sourcetype || null,
-        createdAt: serverTimestamp()
-      }), { merge: true });
+        updatedAt: serverTimestamp()
+      };
+      
+      batch.set(ref, payload, { merge: true });
     });
     await batch.commit();
   } catch (err: any) {
@@ -284,87 +294,6 @@ export async function setCachedSources(results: Array<{ source: string; country:
   }
 }
 
-// Fetch cached news feed validation results
-export async function getCachedNewsFeeds(domains: string[]): Promise<Record<string, any>> {
-  const cache: Record<string, any> = {};
-
-  // 1. Check local storage
-  const local = getLocalCache("feeds");
-  domains.forEach((dom) => {
-    const clean = dom.toLowerCase().trim();
-    if (clean && local[clean]) {
-      cache[clean] = local[clean];
-    }
-  });
-
-  // 2. Fetch from Firestore
-  const missing = domains.filter(d => !cache[d.toLowerCase().trim()]);
-  if (missing.length > 0) {
-    try {
-      const promises = missing.map(async (domain) => {
-        const docClean = domain.toLowerCase().trim();
-        if (!docClean) return;
-        const docId = getSafeDocId(docClean);
-        const docRef = doc(db, "news_feed_cache", docId);
-        const snap = await getDoc(docRef);
-        if (snap.exists()) {
-          const data = snap.data();
-          cache[docClean] = data;
-          saveLocalCache("feeds", { [docClean]: data });
-        }
-      });
-      await Promise.all(promises);
-    } catch (err) {
-      console.warn("Failed to query news_feed_cache on Firestore (using local storage fallback instead)", err);
-    }
-  }
-  return cache;
-}
-
-// Set news feed results in the cache
-export async function setCachedNewsFeeds(results: Array<{ domain: string; country: string; language: string; rssUrl: string; sitemapUrl: string; newsCategory: string }>) {
-  // 1. Save locally
-  const localData: Record<string, any> = {};
-  results.forEach(item => {
-    const clean = item.domain.toLowerCase().trim();
-    if (clean) {
-      localData[clean] = {
-        domain: clean,
-        country: item.country,
-        language: item.language,
-        rssUrl: item.rssUrl,
-        sitemapUrl: item.sitemapUrl,
-        newsCategory: item.newsCategory,
-        createdAt: new Date().toISOString()
-      };
-    }
-  });
-  saveLocalCache("feeds", localData);
-
-  // 2. Save on Firestore
-  try {
-    const batch = writeBatch(db);
-    results.forEach((item) => {
-      const docClean = item.domain.toLowerCase().trim();
-      if (!docClean) return;
-      const docId = getSafeDocId(docClean);
-      const ref = doc(db, "news_feed_cache", docId);
-      batch.set(ref, cleanForFirestore({
-        domain: docClean,
-        country: item.country,
-        language: item.language,
-        rssUrl: item.rssUrl,
-        sitemapUrl: item.sitemapUrl,
-        newsCategory: item.newsCategory,
-        createdAt: serverTimestamp()
-      }), { merge: true });
-    });
-    await batch.commit();
-  } catch (err: any) {
-    console.warn("Could not save news feeds to firestore cache (saved locally instead)", err);
-    dispatchSystemToast(`Firestore news feeds caching failed: ${err.message || err}. Saved locally instead.`, "error");
-  }
-}
 
 // Save complete history run log
 export async function saveRunHistory(
@@ -387,19 +316,27 @@ export async function saveRunHistory(
   };
   saveLocalHistoryItem(localItem, userId);
 
-  // 2. Sync to Firestore history
+  // 2. Sync to Firestore history in chunks of 100
   try {
     const historyRef = collection(db, "history");
     const sanitizedResults = cleanForFirestore(results);
-    await addDoc(historyRef, {
-      userId: userId || "",
-      userEmail: userEmail || "",
-      fileName: fileName || "",
-      mode,
-      totalCount: results.length,
-      timestamp: serverTimestamp(),
-      results: sanitizedResults
-    });
+    const CHUNK_SIZE = 100;
+    
+    for (let i = 0; i < sanitizedResults.length; i += CHUNK_SIZE) {
+      const chunk = sanitizedResults.slice(i, i + CHUNK_SIZE);
+      const isMultiPart = sanitizedResults.length > CHUNK_SIZE;
+      const partSuffix = isMultiPart ? ` (Part ${Math.floor(i / CHUNK_SIZE) + 1})` : "";
+      
+      await addDoc(historyRef, {
+        userId: userId || "",
+        userEmail: userEmail || "",
+        fileName: (fileName || "") + partSuffix,
+        mode,
+        totalCount: chunk.length,
+        timestamp: serverTimestamp(),
+        results: chunk
+      });
+    }
   } catch (err: any) {
     console.warn("Could not save run history to firestore (saved locally instead)", err);
     // Dynamic toast showing exactly why firestore history failed
@@ -419,11 +356,10 @@ export async function wipeGlobalDatabaseCache() {
   // 1. Wipe local caches
   localStorage.removeItem("publisher_cache_domains");
   localStorage.removeItem("publisher_cache_sources");
-  localStorage.removeItem("publisher_cache_feeds");
 
-  // 2. Wipe Firestore collections (domain_cache, source_cache, news_feed_cache)
+  // 2. Wipe Firestore collections (domain_cache, source_cache)
   try {
-    const collectionsToClear = ["domain_cache", "source_cache", "news_feed_cache"];
+    const collectionsToClear = ["domain_cache", "source_cache"];
     for (const collName of collectionsToClear) {
       const snap = await getDocs(collection(db, collName));
       if (!snap.empty) {
