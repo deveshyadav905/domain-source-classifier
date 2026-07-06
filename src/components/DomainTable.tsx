@@ -140,9 +140,9 @@ export default function DomainTable({
     }
   };
 
-  const getCategoryBadge = (cat?: DomainRow["category"]) => {
+  const getCategoryBadge = (cat?: string) => {
     if (!cat) return <span className="text-gray-400 text-xs">-</span>;
-    switch (cat) {
+    switch (cat.toLowerCase().trim()) {
       case "e-commerce":
         return (
           <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-indigo-50 text-indigo-800 font-mono">
@@ -165,6 +165,12 @@ export default function DomainTable({
         return (
           <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-gray-50 text-gray-600 font-mono">
             other
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium bg-purple-50 text-purple-700 border border-purple-100 font-mono capitalize">
+            {cat}
           </span>
         );
     }
@@ -318,6 +324,35 @@ export default function DomainTable({
   const countNewsPendingOnly = rows.filter((r) => !r.country && !r.language && r.newsStatus !== "error" && r.newsStatus !== "processing").length;
 
 
+  // Extract unique categories dynamically from rows for filtering
+  const uniqueCategories = Array.from(
+    new Set(
+      rows
+        .map((r) => r.category)
+        .filter(Boolean)
+    )
+  ) as string[];
+
+  // Extract unique webpage purposes dynamically from rows for filtering
+  const standardPurposes = [
+    "News Publisher",
+    "University / Education",
+    "Product Website",
+    "Organization",
+    "Blog",
+    "Corporate / Company",
+    "Government",
+    "E-commerce",
+    "Social Media / Forum",
+    "Other",
+  ];
+  const uniquePurposes = Array.from(
+    new Set([
+      ...standardPurposes,
+      ...rows.map((r) => r.isNewsPublisher).filter(Boolean)
+    ])
+  ) as string[];
+
   // Extract unique news categories from source rows dynamically for filtering
   const uniqueNewsCategories = Array.from(
     new Set(
@@ -370,13 +405,14 @@ export default function DomainTable({
                     setFilterCategory(e.target.value);
                     setCurrentPage(1);
                   }}
-                  className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs bg-white text-gray-700 focus:outline-hidden cursor-pointer"
+                  className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs bg-white text-gray-700 focus:outline-hidden cursor-pointer capitalize"
                 >
                   <option value="">All Categories</option>
-                  <option value="e-commerce">E-Commerce</option>
-                  <option value="technology">Technology</option>
-                  <option value="blogs">Blogs</option>
-                  <option value="other">Other</option>
+                  {uniqueCategories.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
                 </select>
 
                 {/* Webpage Purpose / Domain Type SELECT */}
@@ -389,19 +425,11 @@ export default function DomainTable({
                   className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs bg-white text-gray-700 focus:outline-hidden cursor-pointer"
                 >
                   <option value="">All Page Purposes</option>
-                  <option value="News Publisher">News Publisher</option>
-                  <option value="University / Education">University / Education</option>
-                  <option value="Product Website">Product Website</option>
-                  <option value="Organization">Organization</option>
-                  <option value="Blog">Blog</option>
-                  <option value="Corporate / Company">Corporate / Company</option>
-                  <option value="Government">Government</option>
-                  <option value="E-commerce">E-commerce</option>
-                  <option value="Social Media / Forum">Social Media / Forum</option>
-                  <option value="Other">Other</option>
-                  {/* Backward compatibility with legacy inputs */}
-                  <option value="Yes">Yes (News Publisher)</option>
-                  <option value="No">No (Standard Site)</option>
+                  {uniquePurposes.map((p) => (
+                    <option key={p} value={p}>
+                      {p === "Yes" ? "Yes (News Publisher)" : p === "No" ? "No (Standard Site)" : p}
+                    </option>
+                  ))}
                 </select>
               </>
             ) : (
@@ -468,9 +496,9 @@ export default function DomainTable({
       <div className="bg-white border border-gray-100 p-4 rounded-2xl shadow-xs flex flex-col gap-3 text-xs">
         {/* Info Note about token savings */}
         <div className="flex items-center gap-2 text-[11px] text-gray-500 bg-amber-50/50 border border-amber-100/60 p-2.5 rounded-xl">
-          <span className="font-bold text-amber-700 font-mono bg-amber-100 px-1.5 py-0.5 rounded uppercase text-[9px]">Token Saver</span>
+          <span className="font-bold text-amber-700 font-mono bg-amber-100 px-1.5 py-0.5 rounded uppercase text-[9px]">Speed Booster</span>
           <p>
-            Optimize your costs! First run <strong>Check Page Purpose</strong> to classify your list. Then, running <strong>AI META</strong> will automatically skip all non-news domains, saving you massive Gemini API tokens.
+            Optimize your workflow! Run <strong>Check Page Purpose</strong> to quickly classify webpage purposes in ultra-fast concurrent parallel batches, or run <strong>AI META</strong> for comprehensive domain branding and categorization.
           </p>
         </div>
 

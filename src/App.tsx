@@ -836,8 +836,9 @@ export default function App() {
 
   // Run fast Yes/No News Publisher checking
   const checkNewsPublisherBatch = async (rawIndices: number[]) => {
+    const domainsRowsList = state.domainsRows;
     const indicesToRun = rawIndices.filter(
-      (idx) => state.rows[idx] && state.rows[idx].newsPublisherStatus !== "success"
+      (idx) => domainsRowsList[idx] && domainsRowsList[idx].newsPublisherStatus !== "success"
     );
 
     if (indicesToRun.length === 0 || state.isCheckingNewsPublisher) {
@@ -854,21 +855,28 @@ export default function App() {
     const signal = domainAbortControllerRef.current.signal;
 
     setState((prev) => {
-      const updatedRows = prev.rows.map((r) =>
+      const updatedDomainsRows = prev.domainsRows.map((r) =>
         indicesToRun.includes(r.index) ? { ...r, newsPublisherStatus: "processing" as const } : r
       );
-      return { ...prev, rows: updatedRows, isCheckingNewsPublisher: true };
+      return {
+        ...prev,
+        domainsRows: updatedDomainsRows,
+        rows: prev.appMode === "domains" ? updatedDomainsRows : prev.rows,
+        isCheckingNewsPublisher: true
+      };
     });
 
     try {
-      const BATCH_SIZE = 100;
+      // Chunking for frontend dispatch: We can send up to 200 at a time to the backend,
+      // and the backend parallelizes internally with chunks of 50!
+      const BATCH_SIZE = 200;
       for (let b = 0; b < indicesToRun.length; b += BATCH_SIZE) {
         if (signal.aborted) {
           throw new DOMException("Aborted", "AbortError");
         }
 
         const chunkIndices = indicesToRun.slice(b, b + BATCH_SIZE);
-        const rowsToAnalyze = chunkIndices.map((idx) => state.rows[idx]);
+        const rowsToAnalyze = chunkIndices.map((idx) => domainsRowsList[idx]);
         const domainsToCheck = rowsToAnalyze.map((r) => r.domain);
 
         const res = await fetch("/api/check-news-publisher", {
@@ -918,12 +926,11 @@ export default function App() {
           finalResultsMap[String(item.domain).toLowerCase().trim()] = {
             isNewsPublisher: item.isNewsPublisher,
             reasoning: item.reasoning,
-            newsPublisherStatus: "success" as const
           };
         });
 
         setState((prev) => {
-          const updatedRows = prev.rows.map((row) => {
+          const updatedDomainsRows = prev.domainsRows.map((row) => {
             if (!chunkIndices.includes(row.index)) return row;
 
             const match = finalResultsMap[row.domain.toLowerCase().trim()];
@@ -942,7 +949,11 @@ export default function App() {
               };
             }
           });
-          return { ...prev, rows: updatedRows };
+          return {
+            ...prev,
+            domainsRows: updatedDomainsRows,
+            rows: prev.appMode === "domains" ? updatedDomainsRows : prev.rows,
+          };
         });
       }
 
@@ -956,12 +967,16 @@ export default function App() {
         addToast(`News check error: ${msg}`, "error");
 
         setState((prev) => {
-          const updatedRows = prev.rows.map((r) =>
+          const updatedDomainsRows = prev.domainsRows.map((r) =>
             indicesToRun.includes(r.index) && r.newsPublisherStatus === "processing"
               ? { ...r, newsPublisherStatus: "error" as const, errorMsg: msg }
               : r
           );
-          return { ...prev, rows: updatedRows };
+          return {
+            ...prev,
+            domainsRows: updatedDomainsRows,
+            rows: prev.appMode === "domains" ? updatedDomainsRows : prev.rows,
+          };
         });
       }
     } finally {
@@ -992,7 +1007,7 @@ export default function App() {
 
     setState((prev) => {
       const updatedDomainsRows = prev.domainsRows.map((r) =>
-        indicesToRun.includes(r.index) ? { ...r, status: "processing" as const } : r
+        indicesToRun.includes(r.index) ? { ...r, status: "processing" as const, newsPublisherStatus: "processing" as const } : r
       );
       return {
         ...prev,
@@ -1155,11 +1170,13 @@ export default function App() {
                 sourcetype: match.sourcetype !== undefined ? match.sourcetype : row.sourcetype,
                 newsStatus: hasNewsSuccess ? ("success" as const) : row.newsStatus,
                 status: isSuccess ? ("success" as const) : row.status,
+                newsPublisherStatus: isSuccess ? ("success" as const) : row.newsPublisherStatus,
               };
             } else {
               return {
                 ...row,
                 status: "error" as const,
+                newsPublisherStatus: "error" as const,
                 errorMsg: "No classification matching this domain returned/cached.",
               };
             }
@@ -1198,7 +1215,7 @@ export default function App() {
         setState((prev) => {
           const updatedDomainsRows = prev.domainsRows.map((r) =>
             indicesToRun.includes(r.index) && r.status === "processing"
-              ? { ...r, status: "pending" as const }
+              ? { ...r, status: "pending" as const, newsPublisherStatus: "pending" as const }
               : r
           );
           return {
@@ -1218,10 +1235,10 @@ export default function App() {
           const updatedDomainsRows = prev.domainsRows.map((r) => {
             if (!indicesToRun.includes(r.index)) return r;
             if (currentChunk.includes(r.index)) {
-              return { ...r, status: "error" as const, errorMsg: cleanMsg };
+              return { ...r, status: "error" as const, newsPublisherStatus: "error" as const, errorMsg: cleanMsg };
             }
             if (r.status === "processing") {
-              return { ...r, status: "pending" as const };
+              return { ...r, status: "pending" as const, newsPublisherStatus: "pending" as const };
             }
             return r;
           });
@@ -1243,11 +1260,12 @@ export default function App() {
             return {
               ...r,
               status: "error" as const,
+              newsPublisherStatus: "error" as const,
               errorMsg: err.message || "Cache check or AI classification failed"
             };
           }
           if (r.status === "processing") {
-            return { ...r, status: "pending" as const };
+            return { ...r, status: "pending" as const, newsPublisherStatus: "pending" as const };
           }
           return r;
         });

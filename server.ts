@@ -394,8 +394,8 @@ For each domain, identify:
 1. Site name which MUST be the domain name itself WITHOUT the top-level domain (TLD) suffix (e.g. remove '.com', '.net', '.org', '.edu', '.co.uk', '.media', etc.), formatted strictly in Title Case, keeping any dots ('.') or hyphens ('-') exactly as they are in the remaining domain name (e.g., 'Kaktus' for 'kaktus.media', 'Shopify' for 'shopify.com', 'Harvard' for 'harvard.edu', 'Blog.Csdn' for 'blog.csdn.net', 'E-Commerce-Site' for 'e-commerce-site.com').
 2. Official/polished display name in Title Case and FULL expanded form rather than short abbreviation (e.g. 'British Broadcasting Corporation' instead of 'BBC')
 3. Detailed site description (e.g., 'An independent regional news outlet...' or 'Global e-commerce portal...')
-4. Category - Must be strictly one of: "e-commerce", "technology", "blogs", or "other" (representing other generic/specific websites outside these three).
-5. What is the webpage type/purpose of the domain? Must be strictly one of the allowed values: ["News Publisher", "University / Education", "Product Website", "Organization", "Blog", "Corporate / Company", "Government", "E-commerce", "Social Media / Forum", "Other"].
+4. Category - Dynamically determine the primary category/industry of the domain based on its target business, content, or field of activity (e.g., 'e-commerce', 'technology', 'blogs', 'education', 'news', 'healthcare', 'finance', 'travel', 'entertainment', etc.).
+5. What is the webpage type/purpose of the domain? Dynamically determine the webpage type or purpose of the domain (e.g., 'News Publisher', 'University / Education', 'Product Website', 'Organization', 'Blog', 'Corporate / Company', 'Government', 'E-commerce', 'Social Media / Forum', 'Search Engine', 'Portfolio', etc.). Be specific and accurate.
 6. A brief explanation/reasoning of 1 short sentence why it was categorized this way.
 
 Domains to classify:
@@ -412,8 +412,8 @@ GUIDELINES FOR FIELDS:
 1. "siteName": MUST be the domain name itself WITHOUT the top-level domain (TLD) suffix (e.g. remove '.com', '.net', '.org', '.edu', '.co.uk', '.media', etc.), formatted strictly in Title Case, preserving any dots ('.') and hyphens ('-') exactly as they are in the remaining domain URL (e.g., 'Kaktus' for 'kaktus.media', 'Shopify' for 'shopify.com', 'Harvard' for 'harvard.edu', 'Blog.Csdn' for 'blog.csdn.net', 'E-Commerce-Site' for 'e-commerce-site.com'). Do NOT keep or include the TLD suffix under any circumstances.
 2. "displayName": MUST be strictly in Title Case and use the FULL expansion of the brand or organization name instead of short abbreviations or acronyms (e.g., use 'British Broadcasting Corporation' instead of 'BBC', 'National Broadcasting Company' instead of 'NBC', 'The New York Times' instead of 'NYT', 'Massachusetts Institute of Technology' instead of 'MIT', 'Cable News Network' instead of 'CNN').
 3. "description": A high-fidelity, comprehensive single-sentence description of the site's primary function, target audience, and content style. Must be clear, informative, and avoid generic statements like "A web domain" or "No description available".
-4. "category": Must be strictly one of: "e-commerce", "technology", "blogs", or "other". Be precise.
-5. "isNewsPublisher": Must be strictly one of: ["News Publisher", "University / Education", "Product Website", "Organization", "Blog", "Corporate / Company", "Government", "E-commerce", "Social Media / Forum", "Other"]. Identify the webpage purpose/type.
+4. "category": Dynamically classify the primary industry, topic, or industry vertical of the domain (e.g., 'e-commerce', 'technology', 'blogs', 'education', 'news', 'healthcare', 'finance', 'travel', 'entertainment', etc.). Be highly specific and accurate.
+5. "isNewsPublisher": Dynamically determine the webpage type, purpose, or organization style (e.g., 'News Publisher', 'University / Education', 'Product Website', 'Organization', 'Blog', 'Corporate / Company', 'Government', 'E-commerce', 'Social Media / Forum', 'Search Engine', etc.).
 6. "reasoning": A crisp, one-sentence objective justification for the selected category.
 
 EXAMPLES OF HIGH-QUALITY CLASSIFICATION:
@@ -423,42 +423,9 @@ Result: {
   "siteName": "Kaktus",
   "displayName": "Kaktus Media",
   "description": "An independent Russian-language online news portal based in Kyrgyzstan covering current national events, politics, and social developments.",
-  "category": "other",
+  "category": "news",
   "isNewsPublisher": "News Publisher",
   "reasoning": "Active digital publication delivering local and regional news updates in Central Asia."
-}
-
-Input domain: "shopify.com"
-Result: {
-  "domain": "shopify.com",
-  "siteName": "Shopify",
-  "displayName": "Shopify",
-  "description": "A leading global commerce platform providing tools to build, customize, and manage online stores.",
-  "category": "e-commerce",
-  "isNewsPublisher": "Product Website",
-  "reasoning": "Specialized platform dedicated to electronic commerce operations and merchant store builders."
-}
-
-Input domain: "harvard.edu"
-Result: {
-  "domain": "harvard.edu",
-  "siteName": "Harvard",
-  "displayName": "Harvard University",
-  "description": "A private Ivy League research university in Cambridge, Massachusetts, renowned globally for its academic excellence.",
-  "category": "other",
-  "isNewsPublisher": "University / Education",
-  "reasoning": "Official academic domain of a world-renowned higher education institution."
-}
-
-Input domain: "blog.csdn.net"
-Result: {
-  "domain": "blog.csdn.net",
-  "siteName": "Blog.Csdn",
-  "displayName": "CSDN Blog Platform",
-  "description": "A leading professional Chinese IT technology community and blogging platform for software developers.",
-  "category": "technology",
-  "isNewsPublisher": "Blog",
-  "reasoning": "Tech blogging and developer community platform."
 }`,
           responseMimeType: "application/json",
           responseSchema: {
@@ -484,11 +451,11 @@ Result: {
                 },
                 category: {
                   type: Type.STRING,
-                  description: "Must be strictly one of: 'e-commerce', 'technology', 'blogs', 'other'.",
+                  description: "Dynamically determined primary industry or niche of the domain (e.g., 'e-commerce', 'technology', 'blogs', 'education', 'news', 'healthcare', 'finance', 'travel', etc.).",
                 },
                 isNewsPublisher: {
                   type: Type.STRING,
-                  description: "Must be strictly one of: 'News Publisher', 'University / Education', 'Product Website', 'Organization', 'Blog', 'Corporate / Company', 'Government', 'E-commerce', 'Social Media / Forum', 'Other'.",
+                  description: "Dynamically determined webpage type/purpose of the domain (e.g., 'News Publisher', 'University / Education', 'Product Website', 'Organization', 'Blog', 'Corporate / Company', 'Government', 'E-commerce', 'Social Media / Forum', 'Search Engine', etc.).",
                 },
                 reasoning: {
                   type: Type.STRING,
@@ -554,6 +521,7 @@ Result: {
   }
 });
 
+
 app.post("/api/check-news-publisher", async (req, res) => {
   try {
     const { domains, customApiKey } = req.body;
@@ -562,13 +530,16 @@ app.post("/api/check-news-publisher", async (req, res) => {
     }
 
     const gemini = getGemini(customApiKey);
-    const CHUNK_SIZE = 100;
-    const results = [];
-
+    const CHUNK_SIZE = 50; // Smaller chunk size for faster response time
+    const chunks = [];
     for (let i = 0; i < domains.length; i += CHUNK_SIZE) {
-      const chunk = domains.slice(i, i + CHUNK_SIZE);
+      chunks.push(domains.slice(i, i + CHUNK_SIZE));
+    }
+
+    // Process all chunks concurrently using Promise.all for maximum speed!
+    const chunkPromises = chunks.map(async (chunk) => {
       const prompt = `Determine the webpage purpose/type of the following domains.
-Must be strictly one of these allowed values: ["News Publisher", "University / Education", "Product Website", "Organization", "Blog", "Corporate / Company", "Government", "E-commerce", "Social Media / Forum", "Other"].
+Dynamically determine the webpage type or purpose of the domain (e.g., 'News Publisher', 'University / Education', 'Product Website', 'Organization', 'Blog', 'Corporate / Company', 'Government', 'E-commerce', 'Social Media / Forum', 'Portfolio', 'Search Engine', etc.).
 Provide a brief 1-sentence reasoning explaining why it was classified under this type.
 
 Domains:
@@ -578,19 +549,8 @@ ${chunk.map((d) => `- ${d}`).join("\n")}`;
         model: "gemini-3.5-flash",
         contents: prompt,
         config: {
-          systemInstruction: `You are an elite, super fast domain intelligence assistant. For each input domain, determine its primary webpage purpose / domain type and provide a brief 1-sentence reasoning.
-
-The webpage purpose/type MUST be strictly chosen from:
-- 'News Publisher' (or similar general current news/articles portal)
-- 'University / Education' (educational and academic institution website)
-- 'Product Website' (for a tool, software, service, or brand product)
-- 'Organization' (non-profit, civic, international or private organization)
-- 'Blog' (personal, hobby, specialized or community blog site)
-- 'Corporate / Company' (general company homepage or business agency)
-- 'Government' (official state or city governance portal)
-- 'E-commerce' (shopping web stores and retail marketplaces)
-- 'Social Media / Forum' (discussion communities and interactive social networks)
-- 'Other' (anything else)
+          systemInstruction: `You are an elite, super fast domain intelligence assistant. For each input domain, dynamically determine its webpage type or purpose and provide a brief 1-sentence reasoning.
+Examples of page types include 'News Publisher', 'University / Education', 'Product Website', 'Organization', 'Blog', 'Corporate / Company', 'Government', 'E-commerce', 'Social Media / Forum', etc. Do not be limited to these; choose the most specific and accurate webpage type.
 
 Do not return any other fields in the JSON object besides the schema properties.`,
           responseMimeType: "application/json",
@@ -605,7 +565,7 @@ Do not return any other fields in the JSON object besides the schema properties.
                 },
                 isNewsPublisher: {
                   type: Type.STRING,
-                  description: "Must be strictly one of: 'News Publisher', 'University / Education', 'Product Website', 'Organization', 'Blog', 'Corporate / Company', 'Government', 'E-commerce', 'Social Media / Forum', 'Other'.",
+                  description: "Dynamically determined webpage type/purpose of the domain.",
                 },
                 reasoning: {
                   type: Type.STRING,
@@ -626,28 +586,27 @@ Do not return any other fields in the JSON object besides the schema properties.
       try {
         const parsedChunk = JSON.parse(responseText.trim());
         if (Array.isArray(parsedChunk)) {
-          results.push(...parsedChunk);
+          return parsedChunk;
         } else {
           console.error("Gemini news publisher check didn't return an array:", responseText);
-          chunk.forEach((d) => {
-            results.push({
-              domain: d,
-              isNewsPublisher: "Other",
-              reasoning: "Failed to parse news status chunk",
-            });
-          });
+          return chunk.map((d) => ({
+            domain: d,
+            isNewsPublisher: "Other",
+            reasoning: "Failed to parse news status chunk",
+          }));
         }
       } catch (jsonErr) {
         console.error("JSON parsing error on Gemini news check", jsonErr, responseText);
-        chunk.forEach((d) => {
-          results.push({
-            domain: d,
-            isNewsPublisher: "Other",
-            reasoning: "Invalid JSON response from model",
-          });
-        });
+        return chunk.map((d) => ({
+          domain: d,
+          isNewsPublisher: "Other",
+          reasoning: "Invalid JSON response from model",
+        }));
       }
-    }
+    });
+
+    const chunkResults = await Promise.all(chunkPromises);
+    const results = chunkResults.flat();
 
     return res.json({ success: true, results });
   } catch (error: any) {
@@ -662,6 +621,7 @@ Do not return any other fields in the JSON object besides the schema properties.
     return res.status(isQuota ? 429 : 500).json({ error: readableError });
   }
 });
+
 
 // Endpoint to fetch Tranco rank details to fetch priorities
 app.post("/api/tranco", async (req, res) => {

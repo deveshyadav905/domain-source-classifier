@@ -20,11 +20,40 @@ export default function VisualCharts({ rows }: VisualChartsProps) {
   const processed = successes.length;
   const pending = rows.filter((r) => r.status === "pending").length;
 
-  // Category counts
-  const ecom = successes.filter((r) => r.category === "e-commerce").length;
-  const tech = successes.filter((r) => r.category === "technology").length;
-  const blog = successes.filter((r) => r.category === "blogs").length;
-  const other = successes.filter((r) => r.category === "other").length;
+  // Category counts aggregated dynamically
+  const categoryMap: Record<string, number> = {};
+  successes.forEach((r) => {
+    if (r.category) {
+      const cleanVal = r.category.trim();
+      categoryMap[cleanVal] = (categoryMap[cleanVal] || 0) + 1;
+    }
+  });
+
+  const categoryColors: Record<string, string> = {
+    "e-commerce": "#6366f1", // indigo
+    "technology": "#06b6d4", // cyan
+    "blogs": "#f59e0b",      // amber
+    "other": "#9ca3af",      // gray
+  };
+
+  const extendedColors = [
+    "#8b5cf6", // purple
+    "#10b981", // emerald
+    "#ec4899", // pink
+    "#f43f5e", // rose
+    "#14b8a6", // teal
+    "#0ea5e9", // sky
+  ];
+
+  const catData = Object.entries(categoryMap).map(([name, val], idx) => {
+    const lowerName = name.toLowerCase();
+    const color = categoryColors[lowerName] || extendedColors[idx % extendedColors.length];
+    return {
+      name: name.charAt(0).toUpperCase() + name.slice(1),
+      value: val,
+      color,
+    };
+  }).sort((a, b) => b.value - a.value);
 
   const isNewsNum = successes.filter((r) => r.isNewsPublisher === "Yes" || r.isNewsPublisher === "News Publisher").length;
 
@@ -51,17 +80,10 @@ export default function VisualCharts({ rows }: VisualChartsProps) {
     "Other (No News)": "#6b7280"        // dark gray
   };
 
-  const catData = [
-    { name: "E-Commerce", value: ecom, color: "#6366f1" }, // indigo
-    { name: "Technology", value: tech, color: "#06b6d4" }, // cyan
-    { name: "Blogs", value: blog, color: "#f59e0b" },      // amber
-    { name: "Other (Standard)", value: other, color: "#9ca3af" },  // gray
-  ].filter((d) => d.value > 0);
-
-  const newsData = Object.entries(purposeMap).map(([name, val]) => ({
+  const newsData = Object.entries(purposeMap).map(([name, val], idx) => ({
     name,
     value: val,
-    color: purposeColors[name] || "#9ca3af"
+    color: purposeColors[name] || extendedColors[idx % extendedColors.length]
   })).sort((a, b) => b.value - a.value);
 
   // If no items have been classified yet, show empty/graceful guide state
