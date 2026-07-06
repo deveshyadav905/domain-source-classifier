@@ -1,8 +1,57 @@
 # Domain Classifier 🌐📊
 
-An enterprise-ready, full-stack domain intelligence and classification platform. This application integrates **Google Sheets**, the **Gemini AI API**, the **Tranco Domain Popularity Rank API**, and **Firebase** into a cohesive system designed to load, validate, categorize, and enrich bulk domains and content syndication feeds.
+<p align="center">
+  <img src="https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React" />
+  <img src="https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/Express.js-000000?style=for-the-badge&logo=express&logoColor=white" alt="Express" />
+  <img src="https://img.shields.io/badge/Gemini_API-8E75C2?style=for-the-badge&logo=google&logoColor=white" alt="Gemini" />
+  <img src="https://img.shields.io/badge/Firebase-FFCA28?style=for-the-badge&logo=firebase&logoColor=black" alt="Firebase" />
+  <img src="https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white" alt="Tailwind" />
+</p>
+
+An enterprise-ready, high-performance, full-stack domain intelligence and bulk classification platform. This application integrates **Google Sheets**, the **Gemini AI API**, the **Tranco Domain Popularity Rank API**, and **Firebase** into a cohesive system designed to load, validate, categorize, and enrich bulk domains and content syndication feeds with dynamic caching and speed-boosted parallel processing.
 
 ---
+
+## 🗺️ System Architecture
+
+The following diagram illustrates the flow of data through the high-performance pipeline, featuring dual-layer caching, background parallelization, and model-fallback mechanics:
+
+```text
+┌────────────────────────────────────────────────────────┐
+│                   React 18 Dashboard                   │
+│  - Interactive Data Grid     - Recharts Visualizations │
+│  - Dual-Mode Filtering       - Dynamic Google Sheet UI │
+└───────────┬────────────────────────────────▲───────────┘
+            │ 1. Import / Run                │ 6. Real-time updates
+            ▼                                │    & State Refresh
+┌────────────────────────────────────────────┴───────────┐
+│              Express Backend (server.ts)               │
+│  - Concurrent Chunking       - Multi-Model Fallbacks  │
+│  - Token Optimization        - Response Validation    │
+└───────────┬────────────────────────────────▲───────────┘
+            ├───────────────┐                │ 5. Returns
+            │ (On Cache Hit)│                │    Merged Meta
+            ▼               ▼                │
+┌───────────────────────┐ ┌──────────────────┴───────────┐
+│     Firebase DB       │ │        Gemini API Client     │
+│   & Local Cache       │ │  - Primary: gemini-3.5-flash │
+│  - Real-time caching  │ │  - Fallback: 3.1-flash-lite │
+│  - High-speed lookup  │ │  - Parallel chunks of 50    │
+└───────────────────────┘ └──────────────────────────────┘
+            ▲                                ▲
+            │ 2. Miss? Query AI              │ 3. Fetch Domain Context
+            └────────────────────────────────┴───────────────┐
+                                                             ▼
+                                                    ┌─────────────────┐
+                                                    │   Tranco API    │
+                                                    │ - Popularity    │
+                                                    │ - Traffic Rank  │
+                                                    └─────────────────┘
+```
+
+---
+
 
 ## 🚀 Key Services & Features
 
@@ -145,3 +194,33 @@ The server will boot on port **3000** and serve the static files in `dist/` with
 
 *   **Server-Side Proxies:** All sensitive calls to the Gemini API are handled exclusively server-side via `/api/*` endpoints. This ensures your private `GEMINI_API_KEY` is never exposed or downloaded to client browsers.
 *   **Lazy Credentials:** The AI SDK validates the environment at the moment of execution. If the default API key is missing, users can input their own temporary key in the UI, which will be safely transferred in the headers of their request.
+
+---
+
+## 🚀 GitHub Searchability & SEO Optimization Guide
+
+To maximize this project's visibility, attract search engine traffic, and make it highly professional for viewers on GitHub, implement the following configurations:
+
+### 1. Configure Search-Friendly Repository Topics
+Topics are the tags users search for on GitHub. In your repository homepage, click the **Settings icon** next to **About** and add these specific, high-intent tags:
+*   `gemini-api` — Brings in developers searching for Gemini models.
+*   `domain-classification` — Targets users looking for domain intelligence tools.
+*   `data-enrichment` — Attracts people wanting to clean or enrich sheet data.
+*   `google-sheets-integration` — For anyone integrating Sheets with Express/React.
+*   `recharts-dashboard` — For developers looking for premium visualization templates.
+*   `fullstack-typescript` — For modern Node.js + React stacks.
+*   `tranco-rank` — Specific to domain authority integrations.
+*   `tailwindcss-v4` — Highlights usage of modern frontend styling.
+
+### 2. Craft a Captivating About Section
+Set your GitHub **About** description to something concise, keyword-rich, and benefit-focused:
+> 🌐📊 Full-stack Domain Intelligence Platform. Enrich bulk domains with Site Name, Display Name, Category, Page Purpose (e.g. News, Government, Blog), and Tranco Popularity Rankings. Powered by Gemini AI, Google Sheets, React, Express, and Firebase.
+
+### 3. Setup GitHub Pages / Social Preview (OpenGraph Image)
+*   **Social Preview:** Go to **Settings > General > Social preview** and upload a high-quality screenshot of the dashboard. This makes the link look incredibly clean and engaging when shared on Twitter, LinkedIn, or Discord.
+*   **Vibrant README Screenshot:** If possible, take a screenshot of your interactive Recharts distribution charts and the Domain Table grid, save it to `assets/dashboard-preview.png`, and reference it in this README using `<img src="./assets/dashboard-preview.png" alt="Dashboard Preview" />`.
+
+### 4. Optimize the Google Sheets Integration Setup Guide
+*   Keep the **Share Link** instructions clear.
+*   Providing a public sample spreadsheet with 50-100 mixed domains (like `harvard.edu`, `bbc.co.uk`, `github.com`) makes it instantly testable for visitors, encouraging them to star and bookmark the repository.
+
