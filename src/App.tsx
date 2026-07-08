@@ -252,6 +252,7 @@ export default function App() {
   const [apiLimitError, setApiLimitError] = useState<string | null>(null);
 
   const domainAbortControllerRef = useRef<AbortController | null>(null);
+  const newsPublisherAbortControllerRef = useRef<AbortController | null>(null);
   const newsAbortControllerRef = useRef<AbortController | null>(null);
   const trancoAbortControllerRef = useRef<AbortController | null>(null);
 
@@ -848,11 +849,11 @@ export default function App() {
       return;
     }
 
-    if (domainAbortControllerRef.current) {
-      domainAbortControllerRef.current.abort();
+    if (newsPublisherAbortControllerRef.current) {
+      newsPublisherAbortControllerRef.current.abort();
     }
-    domainAbortControllerRef.current = new AbortController();
-    const signal = domainAbortControllerRef.current.signal;
+    newsPublisherAbortControllerRef.current = new AbortController();
+    const signal = newsPublisherAbortControllerRef.current.signal;
 
     setState((prev) => {
       const updatedDomainsRows = prev.domainsRows.map((r) =>
@@ -981,7 +982,7 @@ export default function App() {
       }
     } finally {
       setState((prev) => ({ ...prev, isCheckingNewsPublisher: false }));
-      domainAbortControllerRef.current = null;
+      newsPublisherAbortControllerRef.current = null;
     }
   };
 
@@ -1670,6 +1671,11 @@ export default function App() {
       domainAbortControllerRef.current = null;
       abortedAny = true;
     }
+    if (newsPublisherAbortControllerRef.current) {
+      newsPublisherAbortControllerRef.current.abort();
+      newsPublisherAbortControllerRef.current = null;
+      abortedAny = true;
+    }
     if (newsAbortControllerRef.current) {
       newsAbortControllerRef.current.abort();
       newsAbortControllerRef.current = null;
@@ -1890,10 +1896,16 @@ export default function App() {
 
   const handleDisconnectGoogle = () => {
     const userKeySuffix = firebaseUser ? `_${firebaseUser.uid}` : "_guest";
-    setState((prev) => ({ ...prev, googleAccessToken: null, googleUserEmail: null }));
-    localStorage.removeItem(`google_access_token${userKeySuffix}`);
-    localStorage.removeItem(`google_user_email${userKeySuffix}`);
-    addToast("Disconnected Google Account.", "info");
+    setState((prev) => {
+      if (!prev.googleAccessToken) return prev;
+      localStorage.removeItem(`google_access_token${userKeySuffix}`);
+      localStorage.removeItem(`google_user_email${userKeySuffix}`);
+      // Only show toast if we are actually disconnecting an active connection
+      setTimeout(() => {
+        addToast("Disconnected Google Account.", "info");
+      }, 0);
+      return { ...prev, googleAccessToken: null, googleUserEmail: null };
+    });
   };
 
   const handleSaveClientId = (clientId: string) => {

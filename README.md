@@ -33,12 +33,12 @@ The following diagram illustrates the flow of data through the high-performance 
             ├───────────────┐                │ 5. Returns
             │ (On Cache Hit)│                │    Merged Meta
             ▼               ▼                │
-┌───────────────────────┐ ┌──────────────────┴───────────┐
-│     Firebase DB       │ │        Gemini API Client     │
-│   & Local Cache       │ │  - Primary: gemini-3.5-flash │
-│  - Real-time caching  │ │  - Fallback: 3.1-flash-lite │
-│  - High-speed lookup  │ │  - Parallel chunks of 50    │
-└───────────────────────┘ └──────────────────────────────┘
+┌───────────────────────┐ ┌───────────────────────────────────┐
+│     Firebase DB       │ │        Gemini API Client          │
+│   & Local Cache       │ │  - Primary: gemini-3.1-flash-lite │
+│  - Real-time caching  │ │  - Fallback: gemini-3.5-flash     │
+│  - High-speed lookup  │ │  - Parallel chunks of 50          │
+└───────────────────────┘ └───────────────────────────────────┘
             ▲                                ▲
             │ 2. Miss? Query AI              │ 3. Fetch Domain Context
             └────────────────────────────────┴───────────────┐
@@ -58,12 +58,12 @@ The following diagram illustrates the flow of data through the high-performance 
 The Domain Classifier application provides a robust suite of server-side data extraction, enhancement, and validation modules:
 
 ### 1. Google Sheets Integration (`/api/fetch-sheet`)
-*   **Direct OAuth Handshakes:** Supports secure reading of private spreadsheets using standard Bearer authentication tokens passed directly to the Google Sheets REST API.
-*   **Multi-Stage Fallbacks:** If token-based authorization fails or expires, the backend automatically tries to fetch public CSV exports, retries anonymously, or queries the **Google GViz Visualization API** endpoint to maximize spreadsheet retrieval success.
+*   **Direct OAuth Handshakes & Verification:** Supports secure reading of private spreadsheets using standard Bearer authentication tokens passed directly to the Google Sheets REST API. It handles token verification cleanly and offers proactive feedback via toasts during login/disconnect events.
+*   **Multi-Stage Fallbacks:** If token-based authorization fails or expires (yielding a `401 Unauthorized` response), the application gracefully catches the error, prompting the user to refresh their OAuth connection or attempt fallback public CSV/GViz fetch queries.
 *   **Tab-Level Switching:** Fully supports targeted worksheets by querying specific sheet indices (`gid` values).
 
 ### 2. Batch Domain-Level Intelligence (`/api/classify`)
-*   **Advanced Extraction:** Classifies groups of domains (chunked safely in groups of 100 to prevent API token limits) using state-of-the-art **Gemini 3.5 Flash** models.
+*   **Advanced Extraction:** Classifies groups of domains (chunked safely in groups of 100 to prevent API token limits) using state-of-the-art, lightning-fast **Gemini 3.1 Flash-Lite** models.
 *   **Metadata Fields:** For every target domain, the AI system extracts:
     *   **Site Name:** The clean domain host string formatted in Title Case *without* its Top Level Domain (TLD) suffix (e.g., `'Kaktus'` for `kaktus.media`).
     *   **Display Name:** The official, fully-expanded corporate or organizational title (e.g., `'British Broadcasting Corporation'` instead of `BBC`).
@@ -83,14 +83,17 @@ The Domain Classifier application provides a robust suite of server-side data ex
 
 ### 5. High-Availability AI Resilience & Fallbacks
 *   **Exponential Retry Backoffs:** Protects against transient upstream AI issues by automatically making up to 3 retries with custom delay intervals.
-*   **Dynamic Model Cascading:** Automatically switches models on quota exhaustion:
-    1.  `gemini-3.5-flash` (Primary)
-    2.  `gemini-3.1-flash-lite` (Fallback)
-    3.  `gemini-flash-latest` (Secondary Fallback)
+*   **Dynamic Model Cascading (Prioritized):** Automatically switches models on quota exhaustion or transient platform instability:
+    1.  `gemini-3.1-flash-lite` (Primary - chosen for high-availability, stability, and speed)
+    2.  `gemini-3.5-flash` (Fallback - powerful state-of-the-art developer model)
+    3.  `gemini-flash-latest` (Secondary Fallback - lightweight backup)
 *   **Intelligent Error Sanitization:** Transforms opaque API errors into clear, actionable advice (e.g., informing users to provide their own developer API Key under the *Settings > Secrets* panel).
 
 ### 6. Interactive Visualizations & Analytics
 *   **Responsive Charts:** Incorporates highly detailed **Recharts** dashboard visualization panels showing real-time distribution charts for category, webpage type, and geographic origin of parsed files.
+
+### 7. Granular Execution Control & Process Abort
+*   **Independent Process Aborting:** Added individual, fine-grained control over execution tasks, such as the *News Publisher check process*, backed by an independent `newsPublisherAbortControllerRef`. This allows users to abort/stop specific sub-processes without disrupting or halting all running operations on the active table.
 
 ---
 

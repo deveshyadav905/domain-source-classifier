@@ -180,9 +180,9 @@ function getGemini(customKey?: string): GoogleGenAI {
 // Inline content helper with exponential backoff retry and model fallback
 async function generateContentWithRetry(gemini: GoogleGenAI, params: any, retries: number = 3, baseDelayMs: number = 1000): Promise<any> {
   const modelsToTry = [
-    "gemini-3.5-flash",        // Primary, state-of-the-art developer model with high limits
-    "gemini-3.1-flash-lite",   // Highly reliable lightweight fallback
-    "gemini-flash-latest"      // Lightweight backup
+    "gemini-3.1-flash-lite",   // Primary - highly reliable, fast lightweight model
+    "gemini-3.5-flash",        // Fallback - powerful state-of-the-art model
+    "gemini-flash-latest"      // Backup
   ];
 
   let lastError: any = null;
@@ -402,7 +402,7 @@ Domains to classify:
 ${chunk.map((d) => `- ${d}`).join("\n")}`;
 
       const response = await generateContentWithRetry(gemini, {
-        model: "gemini-3.5-flash",
+        model: "gemini-3.1-flash-lite",
         contents: prompt,
         config: {
           systemInstruction: `You are an elite, highly intelligent domain classification and brand intelligence system.
@@ -546,7 +546,7 @@ Domains:
 ${chunk.map((d) => `- ${d}`).join("\n")}`;
 
       const response = await generateContentWithRetry(gemini, {
-        model: "gemini-3.5-flash",
+        model: "gemini-3.1-flash-lite",
         contents: prompt,
         config: {
           systemInstruction: `You are an elite, super fast domain intelligence assistant. For each input domain, dynamically determine its webpage type or purpose and provide a brief 1-sentence reasoning.
